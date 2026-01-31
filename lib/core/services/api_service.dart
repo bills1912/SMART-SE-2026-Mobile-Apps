@@ -61,7 +61,7 @@ class AuthResponse {
 
 /// ApiService - handles all HTTP requests to backend
 class ApiService {
-  static const String baseUrl = 'https://smart-se26-agentic-ai.onrender.com/api';
+  static const String baseUrl = 'https://smart-se26-agentic-ai-production.up.railway.app/api';
 
   late final Dio _dio;
 
