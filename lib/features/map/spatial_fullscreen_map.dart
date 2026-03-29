@@ -58,7 +58,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      // Use resizeToAvoidBottomInset: false to prevent layout shifts
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
@@ -68,7 +67,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             child: Container(color: Colors.black.withOpacity(0.6)),
           ),
 
-          // ── Main card — uses SafeArea OUTSIDE the card ──────────
+          // ── Main card ──────────────────────────────────────────
           SafeArea(
             child: Padding(
               padding:
@@ -76,7 +75,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
               child: Material(
                 color: Colors.transparent,
                 child: Container(
-                  // Let the card fill the safe area minus padding
                   decoration: BoxDecoration(
                     color: isDark
                         ? AppColors.darkBackground
@@ -89,20 +87,15 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                           spreadRadius: 4)
                     ],
                   ),
-                  // Use a Column that fills the container
                   child: Column(
                     mainAxisSize: MainAxisSize.max,
                     children: [
-                      // Top bar — fixed height
                       _buildTopBar(isDark),
-                      // Content row — fills remaining space
                       Expanded(
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            // Left: map
                             Expanded(child: _buildMapPanel(isDark)),
-                            // Right: analysis panel (collapsible)
                             AnimatedSize(
                               duration: const Duration(milliseconds: 300),
                               curve: Curves.easeOutCubic,
@@ -115,7 +108,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                           ],
                         ),
                       ),
-                      // Bottom bar — fixed height
                       _buildBottomBar(isDark),
                     ],
                   ),
@@ -156,7 +148,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             child: const Icon(Icons.map, color: Colors.white, size: 16),
           ),
           const SizedBox(width: 8),
-          // Title - Expanded so it takes remaining space and never overflows
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -187,7 +178,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             ),
           ),
           const SizedBox(width: 6),
-          // Toggle panel button
           GestureDetector(
             onTap: () => setState(() => _panelOpen = !_panelOpen),
             child: Container(
@@ -220,7 +210,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             ),
           ),
           const SizedBox(width: 4),
-          // Close button
           GestureDetector(
             onTap: () => Navigator.pop(context),
             child: Container(
@@ -246,9 +235,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
   Widget _buildMapPanel(bool isDark) {
     return Column(
       children: [
-        // Map tools
         _buildMapTools(isDark),
-        // Map canvas with flutter_map
         Expanded(
           child: Stack(
             children: [
@@ -262,7 +249,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                   onTap: (tapPosition, point) => _handleMapTap(point),
                 ),
                 children: [
-                  // Google Hybrid base layer
                   TileLayer(
                     urlTemplate:
                     'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
@@ -271,11 +257,9 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                     'com.bps.smart_se2026_agentic_ai',
                     maxZoom: 20,
                   ),
-                  // Corridor lines layer
                   fmap.PolylineLayer(
                     polylines: _buildCorridorLines(),
                   ),
-                  // Business location markers
                   AnimatedBuilder(
                     animation: _pulseCtrl,
                     builder: (_, __) => MarkerLayer(
@@ -284,18 +268,14 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                   ),
                 ],
               ),
-
-              // Zoom hint badge
               Positioned(
                 bottom: 10,
                 right: 10,
-                child: _mapBadge('Pinch · Drag · Double-tap reset', isDark),
+                child: _mapBadge('Drag · Double-tap reset', isDark),
               ),
             ],
           ),
         ),
-
-        // Selected location card
         if (_selected != null)
           _buildSelectedCard(_selected!, isDark)
               .animate()
@@ -339,7 +319,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     final maxU = nonZero.map((l) => l.totalUsaha).reduce(max);
     final markers = <Marker>[];
 
-    // Business dots
     for (final loc in nonZero) {
       final ratio = maxU > 0 ? loc.totalUsaha / maxU : 0.0;
       final isSelected = _selected?.id == loc.id;
@@ -367,7 +346,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             child: Stack(
               alignment: Alignment.center,
               children: [
-                // Pulse ring for selected
                 if (isSelected)
                   Container(
                     width: size + 14 + _pulseCtrl.value * 10,
@@ -378,7 +356,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                           .withOpacity(0.3 * (1 - _pulseCtrl.value)),
                     ),
                   ),
-                // Glow
                 Container(
                   width: size + 8,
                   height: size + 8,
@@ -387,7 +364,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                     color: color.withOpacity(0.22),
                   ),
                 ),
-                // Fill
                 Container(
                   width: size,
                   height: size,
@@ -420,7 +396,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
       );
     }
 
-    // Economic center star markers
     if (_showCenters) {
       for (final center in widget.result.economicCenters) {
         final sz = center.centerType == 'primary' ? 9.0 : 6.5;
@@ -458,9 +433,10 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     return markers;
   }
 
+  // ─── FIX: Map tools — toggles wrapped in Expanded+SingleChildScrollView ──
   Widget _buildMapTools(bool isDark) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: isDark
             ? AppColors.darkSurface.withOpacity(0.8)
@@ -473,7 +449,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
       ),
       child: Row(
         children: [
-          // Zoom buttons
           _toolBtn(Icons.add, () => _mapController.move(
               _mapController.camera.center,
               _mapController.camera.zoom + 1), isDark),
@@ -485,13 +460,25 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
           _toolBtn(Icons.center_focus_strong, () {
             _mapController.move(_center, _zoom);
           }, isDark),
-          const Spacer(),
-          // Toggles
-          _toggleChip('Pusat', _showCenters,
-                  () => setState(() => _showCenters = !_showCenters), isDark),
           const SizedBox(width: 6),
-          _toggleChip('Densitas', _showHeatmap,
-                  () => setState(() => _showHeatmap = !_showHeatmap), isDark),
+          // Wrap toggles so they never overflow on narrow screens
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _toggleChip('Pusat', _showCenters,
+                          () => setState(() => _showCenters = !_showCenters),
+                      isDark),
+                  const SizedBox(width: 6),
+                  _toggleChip('Densitas', _showHeatmap,
+                          () => setState(() => _showHeatmap = !_showHeatmap),
+                      isDark),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -613,7 +600,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             ],
           ),
           const SizedBox(width: 10),
-          // Mini spark bar
           SizedBox(
             width: 4,
             height: 36,
@@ -650,12 +636,10 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
               isDark ? AppColors.darkDivider : AppColors.lightDivider),
         ),
       ),
-      // Column must fill full height — tabs + scrollable content + narrative
       child: Column(
         mainAxisSize: MainAxisSize.max,
         children: [
           _buildTabs(isDark),
-          // Scrollable tab content — takes all remaining space
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(14),
@@ -666,17 +650,17 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                   : _buildStatsTab(isDark),
             ),
           ),
-          // Narrative bar — fixed at bottom, height constrained
           _buildNarrativeBar(isDark),
         ],
       ),
     );
   }
 
+  // ─── FIX: Tabs — each tab in an Expanded so text never clips/overflows ────
   Widget _buildTabs(bool isDark) {
     final tabs = ['Pusat', 'Insight', 'Statistik'];
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         border: Border(
             bottom: BorderSide(
@@ -705,6 +689,8 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                 child: Text(
                   e.value,
                   textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis, // ← FIX: prevent clip
+                  maxLines: 1,
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight:
@@ -767,7 +753,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
           orElse: () => widget.result.locations.first,
         );
         setState(() => _selected = loc);
-        // Pan map to province
         _mapController.move(
             LatLng(loc.latitude, loc.longitude), 6.0);
         HapticFeedback.selectionClick();
@@ -1076,7 +1061,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
   }
 
   Widget _buildNarrativeBar(bool isDark) {
-    // Limit narrative to 3 lines maximum to prevent overflow
     final narrativeText = widget.result.narrativeAnalysis
         .replaceAll('**', '')
         .split('\n')
@@ -1151,7 +1135,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                     fontSize: 9, color: AppColors.primaryOrange)),
           ],
           const Spacer(),
-          // Flexible prevents this text from causing overflow
           Flexible(
             child: Text(
               'Sumber: BPS SE 2016',
@@ -1198,7 +1181,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
   }
 
   void _handleMapTap(LatLng point) {
-    // Find nearest location within ~50km tap radius
     BusinessLocation? nearest;
     double minDist = double.infinity;
 
@@ -1207,7 +1189,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
       final dlng = loc.longitude - point.longitude;
       final dist = sqrt(dlat * dlat + dlng * dlng);
       if (dist < minDist && dist < 1.0) {
-        // ~1 degree ≈ 111km, use 1.0 as threshold
         minDist = dist;
         nearest = loc;
       }
@@ -1244,7 +1225,6 @@ class _StarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
 
-    // Pulsing ring
     canvas.drawCircle(
       center,
       sz + 5 + pulseValue * 6,
@@ -1254,7 +1234,6 @@ class _StarPainter extends CustomPainter {
         ..strokeWidth = 1.5,
     );
 
-    // Star
     final path = ui.Path();
     const pts = 5;
     for (int i = 0; i < pts * 2; i++) {

@@ -21,8 +21,11 @@ class ChatProvider extends ChangeNotifier {
   HealthStatus? _healthStatus;
   bool _initialized = false;
 
-  // Spatial analysis results keyed by message ID
+  // Spatial analysis results keyed by stable message ID
   final Map<String, SpatialAnalysisResult> _spatialResults = {};
+
+  // Storage key prefix for persisted spatial results
+  static const String _spatialStoragePrefix = 'spatial_result_';
 
   ChatProvider(this._apiService, this._authProvider) {
     _authProvider.addListener(_onAuthChanged);
@@ -131,10 +134,14 @@ class ChatProvider extends ChangeNotifier {
       );
       if (cached.messages.isNotEmpty) {
         _currentSession = cached;
+        // Restore spatial results for already-loaded messages
+        await _restoreSpatialResultsForSession(cached);
         notifyListeners();
       }
       final session = await _apiService.getSession(sessionId);
       _currentSession = session;
+      // Restore spatial results for the fully loaded session
+      await _restoreSpatialResultsForSession(session);
       final idx = _sessions.indexWhere((s) => s.id == sessionId);
       if (idx >= 0) _sessions[idx] = session;
       _error = null;
@@ -143,6 +150,74 @@ class ChatProvider extends ChangeNotifier {
     }
     _isLoading = false;
     notifyListeners();
+  }
+
+  // ─── Persist spatial result for a message ─────────────────────────────────
+  /// Saves spatial result keyed by stable messageId to SharedPreferences.
+  Future<void> _persistSpatialResult(
+      String messageId, SpatialAnalysisResult result) async {
+    try {
+      // Serialise only the lightweight data needed to rebuild the result.
+      // We store province totals and bounding-box; the rest is regenerated
+      // via SpatialMockData so we don't need to serialise the full model.
+      final Map<String, dynamic> payload = {
+        'query': result.query,
+        'analysisType': result.analysisType,
+        'generatedAt': result.generatedAt.toIso8601String(),
+        'topProvinces': result.statistics.usahaByProvince.entries
+            .take(34)
+            .map((e) => {'provinsi': e.key, 'total': e.value})
+            .toList(),
+      };
+      await StorageService.setString(
+          '$_spatialStoragePrefix$messageId', jsonEncode(payload));
+    } catch (e) {
+      print('[ChatProvider] Failed to persist spatial result: $e');
+    }
+  }
+
+  /// Restores spatial results for all AI messages in a session from storage.
+  Future<void> _restoreSpatialResultsForSession(ChatSession session) async {
+    for (final msg in session.messages) {
+      if (!msg.isAI) continue;
+      // Already loaded
+      if (_spatialResults.containsKey(msg.id)) continue;
+
+      try {
+        final raw = StorageService.getString('$_spatialStoragePrefix${msg.id}');
+        if (raw == null) continue;
+        final payload = jsonDecode(raw) as Map<String, dynamic>;
+
+        // Re-build from stored query using mock data engine
+        final query = payload['query'] as String? ?? '';
+        if (query.isEmpty) continue;
+
+        // Build a lightweight analysisData from stored province totals
+        final topProvinces = (payload['topProvinces'] as List?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList() ??
+            [];
+
+        final analysisData = {'top_provinces': topProvinces};
+
+        // We need a minimal ChatResponse-like object – use a dummy
+        // response so the spatial service can reconstruct from mock.
+        final dummyResponse = _DummyChatResponse();
+
+        final result = _spatialService.buildSpatialAnalysis(
+          query: query,
+          response: dummyResponse,
+          analysisData: analysisData,
+        );
+
+        if (result.hasLocations) {
+          _spatialResults[msg.id] = result;
+          print('[ChatProvider] Restored spatial result for msg ${msg.id}');
+        }
+      } catch (e) {
+        print('[ChatProvider] Failed to restore spatial result for ${msg.id}: $e');
+      }
+    }
   }
 
   // ─── Send Message ────────────────────────────────────────────────────────
@@ -190,28 +265,13 @@ class ChatProvider extends ChangeNotifier {
         _currentSession!.id.isNotEmpty ? _currentSession!.id : null,
       );
 
-      // ── Spatial Analysis ──────────────────────────────────────────────
-      // Check if this message warrants spatial/map analysis
-      final messageId =
-          '${response.sessionId}_${DateTime.now().millisecondsSinceEpoch}';
-      bool hasSpatial = false;
-
-      if (SpatialAnalysisService.isSpatialQuery(message)) {
-        final spatialResult = await _buildSpatialFromResponse(
-          message: message,
-          response: response,
-        );
-        if (spatialResult != null && spatialResult.hasLocations) {
-          _spatialResults[messageId] = spatialResult;
-          hasSpatial = true;
-          print('[ChatProvider] Spatial analysis built: '
-              '${spatialResult.locations.length} locations, '
-              '${spatialResult.economicCenters.length} centers');
-        }
-      }
+      // ── Build AI message first so we have the stable ID ──────────────────
+      // FIX: Use response.sessionId + response message hash as stable key
+      // so it survives app restarts (unlike a timestamp).
+      final stableId = '${response.sessionId}_${message.trim().hashCode.abs()}';
 
       final aiMessage = ChatMessage(
-        id: messageId,
+        id: stableId,
         sessionId: response.sessionId,
         sender: 'ai',
         content: response.message,
@@ -220,6 +280,22 @@ class ChatProvider extends ChangeNotifier {
         insights: response.insights,
         policies: response.policies,
       );
+
+      // ── Spatial Analysis ──────────────────────────────────────────────────
+      if (SpatialAnalysisService.isSpatialQuery(message)) {
+        final spatialResult = await _buildSpatialFromResponse(
+          message: message,
+          response: response,
+        );
+        if (spatialResult != null && spatialResult.hasLocations) {
+          // Store with stable message ID
+          _spatialResults[stableId] = spatialResult;
+          // Persist so it survives reload
+          await _persistSpatialResult(stableId, spatialResult);
+          print('[ChatProvider] Spatial analysis saved for msg $stableId: '
+              '${spatialResult.locations.length} locations');
+        }
+      }
 
       _currentSession = _currentSession!.copyWith(
         id: response.sessionId,
@@ -262,16 +338,12 @@ class ChatProvider extends ChangeNotifier {
     required ChatResponse response,
   }) async {
     try {
-      // Extract analysis data from the first visualization's data field
-      // or from insights to rebuild province data
       Map<String, dynamic> analysisData = {};
 
       if (response.visualizations != null &&
           response.visualizations!.isNotEmpty) {
-        // Try to pull province/sector data from visualization config
         for (final viz in response.visualizations!) {
           final cfg = viz.config;
-          // Extract from xAxis categories + series data
           final xAxis = cfg['xAxis'];
           final series = cfg['series'];
           if (xAxis is Map && series is List && series.isNotEmpty) {
@@ -279,7 +351,6 @@ class ChatProvider extends ChangeNotifier {
                 (xAxis['data'] as List?)?.cast<String>() ?? <String>[];
             final seriesData = series[0]['data'];
             if (categories.isNotEmpty && seriesData is List) {
-              // Build top_provinces list
               final topProvinces = <Map<String, dynamic>>[];
               for (int i = 0; i < categories.length; i++) {
                 topProvinces.add({
@@ -296,7 +367,6 @@ class ChatProvider extends ChangeNotifier {
               break;
             }
 
-            // Pie chart format
             final pieData = series[0]['data'];
             if (pieData is List && pieData.isNotEmpty && pieData[0] is Map) {
               final topProvinces = <Map<String, dynamic>>[];
@@ -317,8 +387,6 @@ class ChatProvider extends ChangeNotifier {
         }
       }
 
-      // If no viz data, build from all known provinces with zero values
-      // so the map still renders with Indonesia's geography
       if (analysisData.isEmpty) {
         analysisData['top_provinces'] = kProvinceCoordinates.keys.map((k) {
           return {'provinsi': k, 'total': 0};
@@ -358,8 +426,14 @@ class ChatProvider extends ChangeNotifier {
       await _apiService.deleteSession(sessionId);
       _sessions.removeWhere((s) => s.id == sessionId);
       if (_currentSession?.id == sessionId) createNewChat();
-      // Clean up spatial results
-      _spatialResults.removeWhere((k, _) => k.startsWith(sessionId));
+      // Clean up spatial results and persisted storage for this session
+      final keysToRemove = _spatialResults.keys
+          .where((k) => k.startsWith(sessionId))
+          .toList();
+      for (final k in keysToRemove) {
+        _spatialResults.remove(k);
+        await StorageService.remove('$_spatialStoragePrefix$k');
+      }
       notifyListeners();
       return true;
     } catch (e) {
@@ -377,6 +451,16 @@ class ChatProvider extends ChangeNotifier {
           sessionIds.contains(_currentSession!.id)) {
         createNewChat();
       }
+      // Clean up persisted spatial storage
+      for (final sid in sessionIds) {
+        final keysToRemove = _spatialResults.keys
+            .where((k) => k.startsWith(sid))
+            .toList();
+        for (final k in keysToRemove) {
+          _spatialResults.remove(k);
+          await StorageService.remove('$_spatialStoragePrefix$k');
+        }
+      }
       notifyListeners();
       return true;
     } catch (e) {
@@ -390,6 +474,10 @@ class ChatProvider extends ChangeNotifier {
     try {
       await _apiService.deleteAllSessions();
       _sessions.clear();
+      // Clear all persisted spatial results
+      for (final k in _spatialResults.keys.toList()) {
+        await StorageService.remove('$_spatialStoragePrefix$k');
+      }
       _spatialResults.clear();
       createNewChat();
       notifyListeners();
@@ -488,4 +576,21 @@ class ChatProvider extends ChangeNotifier {
     if (s.contains('timeout')) return 'Koneksi timeout, coba lagi';
     return 'Terjadi kesalahan, silakan coba lagi';
   }
+}
+
+/// Minimal stub that satisfies SpatialAnalysisService.buildSpatialAnalysis
+/// when restoring from storage (no real ChatResponse available).
+class _DummyChatResponse implements ChatResponse {
+  @override
+  String get message => '';
+  @override
+  String get sessionId => '';
+  @override
+  List<VisualizationConfig>? get visualizations => null;
+  @override
+  List<String>? get insights => null;
+  @override
+  List<PolicyRecommendation>? get policies => null;
+  @override
+  int get supportingDataCount => 0;
 }
