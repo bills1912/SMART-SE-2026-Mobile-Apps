@@ -1,7 +1,11 @@
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map/flutter_map.dart' as fmap;
+import 'package:latlong2/latlong.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../core/models/spatial_analysis_models.dart';
 
@@ -19,22 +23,19 @@ class SpatialFullscreenMap extends StatefulWidget {
 class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseCtrl;
+  late MapController _mapController;
+
   BusinessLocation? _selected;
   bool _showCenters = true;
   bool _showHeatmap = false;
   bool _panelOpen = true;
 
-  // Map viewport
-  double _scale = 1.0;
-  Offset _offset = Offset.zero;
-  Offset _startOffset = Offset.zero;
-  Offset _startFocal = Offset.zero;
-  double _startScale = 1.0;
-
   // Panel tab
   int _activeTab = 0; // 0=centers 1=insights 2=stats
 
-  late Size _canvasSize;
+  // Indonesia center
+  static const _center = LatLng(-2.5, 118.0);
+  static const _zoom = 4.5;
 
   @override
   void initState() {
@@ -42,6 +43,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     _pulseCtrl = AnimationController(
         vsync: this, duration: const Duration(seconds: 2))
       ..repeat();
+    _mapController = MapController();
   }
 
   @override
@@ -56,6 +58,8 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      // Use resizeToAvoidBottomInset: false to prevent layout shifts
+      resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
           // ── Frosted backdrop ────────────────────────────────────
@@ -64,45 +68,57 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             child: Container(color: Colors.black.withOpacity(0.6)),
           ),
 
-          // ── Main card ───────────────────────────────────────────
+          // ── Main card — uses SafeArea OUTSIDE the card ──────────
           SafeArea(
-            child: Center(
-              child: Container(
-                margin:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? AppColors.darkBackground
-                      : const Color(0xFFF0F4FA),
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.black.withOpacity(0.5),
-                        blurRadius: 40,
-                        spreadRadius: 4)
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    _buildTopBar(isDark),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          // Left: map
-                          Expanded(child: _buildMapPanel(isDark)),
-                          // Right: analysis panel (collapsible)
-                          AnimatedSize(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeOutCubic,
-                            child: _panelOpen
-                                ? _buildAnalysisPanel(isDark)
-                                : const SizedBox(width: 0),
-                          ),
-                        ],
+            child: Padding(
+              padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  // Let the card fill the safe area minus padding
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? AppColors.darkBackground
+                        : const Color(0xFFF0F4FA),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.5),
+                          blurRadius: 40,
+                          spreadRadius: 4)
+                    ],
+                  ),
+                  // Use a Column that fills the container
+                  child: Column(
+                    mainAxisSize: MainAxisSize.max,
+                    children: [
+                      // Top bar — fixed height
+                      _buildTopBar(isDark),
+                      // Content row — fills remaining space
+                      Expanded(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Left: map
+                            Expanded(child: _buildMapPanel(isDark)),
+                            // Right: analysis panel (collapsible)
+                            AnimatedSize(
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeOutCubic,
+                              child: _panelOpen
+                                  ? SizedBox(
+                                  width: 280,
+                                  child: _buildAnalysisPanel(isDark))
+                                  : const SizedBox(width: 0),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    _buildBottomBar(isDark),
-                  ],
+                      // Bottom bar — fixed height
+                      _buildBottomBar(isDark),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -119,7 +135,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
   // ─── Top bar ───────────────────────────────────────────────────────────────
   Widget _buildTopBar(bool isDark) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         border: Border(
             bottom: BorderSide(
@@ -128,52 +144,61 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.max,
         children: [
           Container(
-            width: 34,
-            height: 34,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
               gradient: AppColors.primaryGradient,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(9),
             ),
-            child: const Icon(Icons.map, color: Colors.white, size: 18),
+            child: const Icon(Icons.map, color: Colors.white, size: 16),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
+          // Title - Expanded so it takes remaining space and never overflows
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   'Analisis Spasial — Sensus Ekonomi 2016',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                    fontSize: 12,
                   ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
                 Text(
-                  '${widget.result.statistics.totalLocations} provinsi · '
-                      '${_fmt(widget.result.statistics.totalUsaha)} unit usaha',
+                  '${widget.result.statistics.totalLocations} prov · '
+                      '${_fmt(widget.result.statistics.totalUsaha)} usaha',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: isDark
                         ? AppColors.darkTextTertiary
                         : AppColors.lightTextTertiary,
+                    fontSize: 10,
                   ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
               ],
             ),
           ),
-          // Toggle panel
+          const SizedBox(width: 6),
+          // Toggle panel button
           GestureDetector(
             onTap: () => setState(() => _panelOpen = !_panelOpen),
             child: Container(
-              padding: const EdgeInsets.all(7),
+              padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
                 color: _panelOpen
                     ? AppColors.primaryOrange.withOpacity(0.1)
                     : (isDark
                     ? AppColors.darkSurface
                     : AppColors.lightSurface),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(7),
                 border: Border.all(
                     color: _panelOpen
                         ? AppColors.primaryOrange.withOpacity(0.3)
@@ -185,7 +210,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                 _panelOpen
                     ? Icons.view_sidebar
                     : Icons.view_sidebar_outlined,
-                size: 16,
+                size: 14,
                 color: _panelOpen
                     ? AppColors.primaryOrange
                     : (isDark
@@ -194,19 +219,19 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
               ),
             ),
           ),
-          const SizedBox(width: 6),
-          // Close
+          const SizedBox(width: 4),
+          // Close button
           GestureDetector(
             onTap: () => Navigator.pop(context),
             child: Container(
-              padding: const EdgeInsets.all(7),
+              padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
                 color:
                 isDark ? AppColors.darkSurface : AppColors.lightSurface,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(7),
               ),
               child: Icon(Icons.close,
-                  size: 16,
+                  size: 14,
                   color: isDark
                       ? AppColors.darkTextSecondary
                       : AppColors.lightTextSecondary),
@@ -223,63 +248,53 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
       children: [
         // Map tools
         _buildMapTools(isDark),
-        // Map canvas
+        // Map canvas with flutter_map
         Expanded(
-          child: GestureDetector(
-            onScaleStart: (d) {
-              _startFocal = d.focalPoint;
-              _startOffset = _offset;
-              _startScale = _scale;
-            },
-            onScaleUpdate: (d) => setState(() {
-              _scale = (_startScale * d.scale).clamp(0.6, 5.0);
-              _offset = _startOffset + (d.focalPoint - _startFocal);
-            }),
-            onDoubleTap: () => setState(() {
-              _scale = 1.0;
-              _offset = Offset.zero;
-            }),
-            onTapUp: (d) => _handleTap(d.localPosition),
-            child: Container(
-              color: isDark
-                  ? const Color(0xFF080C12)
-                  : const Color(0xFFCDD9EE),
-              child: Stack(
-                fit: StackFit.expand,
+          child: Stack(
+            children: [
+              FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: _center,
+                  initialZoom: _zoom,
+                  minZoom: 3.0,
+                  maxZoom: 15.0,
+                  onTap: (tapPosition, point) => _handleMapTap(point),
+                ),
                 children: [
-                  CustomPaint(painter: _GridPainter(isDark: isDark)),
+                  // Google Hybrid base layer
+                  TileLayer(
+                    urlTemplate:
+                    'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                    subdomains: const ['0', '1', '2', '3'],
+                    userAgentPackageName:
+                    'com.bps.smart_se2026_agentic_ai',
+                    maxZoom: 20,
+                  ),
+                  // Corridor lines layer
+                  fmap.PolylineLayer(
+                    polylines: _buildCorridorLines(),
+                  ),
+                  // Business location markers
                   AnimatedBuilder(
                     animation: _pulseCtrl,
-                    builder: (_, __) => LayoutBuilder(
-                      builder: (context, constraints) {
-                        _canvasSize = Size(
-                            constraints.maxWidth, constraints.maxHeight);
-                        return CustomPaint(
-                          painter: _FSMapPainter(
-                            locations: widget.result.locations,
-                            economicCenters: widget.result.economicCenters,
-                            selectedLocation: _selected,
-                            showCenters: _showCenters,
-                            showHeatmap: _showHeatmap,
-                            isDark: isDark,
-                            scale: _scale,
-                            offset: _offset,
-                            pulseValue: _pulseCtrl.value,
-                          ),
-                        );
-                      },
+                    builder: (_, __) => MarkerLayer(
+                      markers: _buildAllMarkers(),
                     ),
-                  ),
-                  // Zoom hint
-                  Positioned(
-                    bottom: 10, right: 10,
-                    child: _mapBadge('Pinch · Drag · Double-tap reset', isDark),
                   ),
                 ],
               ),
-            ),
+
+              // Zoom hint badge
+              Positioned(
+                bottom: 10,
+                right: 10,
+                child: _mapBadge('Pinch · Drag · Double-tap reset', isDark),
+              ),
+            ],
           ),
         ),
+
         // Selected location card
         if (_selected != null)
           _buildSelectedCard(_selected!, isDark)
@@ -288,6 +303,159 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
               .fadeIn(),
       ],
     );
+  }
+
+  /// Build corridor polylines connecting top provinces
+  List<fmap.Polyline> _buildCorridorLines() {
+    final nonZero =
+    widget.result.locations.where((l) => l.totalUsaha > 0).toList();
+    if (nonZero.length < 2) return [];
+
+    final top6 = ([...nonZero]
+      ..sort((a, b) => b.totalUsaha.compareTo(a.totalUsaha)))
+        .take(6)
+        .toList();
+
+    final points = top6
+        .map((l) => LatLng(l.latitude, l.longitude))
+        .toList();
+
+    return [
+      fmap.Polyline(
+        points: points,
+        color: const Color(0xFFF97316).withOpacity(0.4),
+        strokeWidth: 2.0,
+        isDotted: true,
+      ),
+    ];
+  }
+
+  /// Build all map markers
+  List<Marker> _buildAllMarkers() {
+    final nonZero =
+    widget.result.locations.where((l) => l.totalUsaha > 0).toList();
+    if (nonZero.isEmpty) return [];
+
+    final maxU = nonZero.map((l) => l.totalUsaha).reduce(max);
+    final markers = <Marker>[];
+
+    // Business dots
+    for (final loc in nonZero) {
+      final ratio = maxU > 0 ? loc.totalUsaha / maxU : 0.0;
+      final isSelected = _selected?.id == loc.id;
+
+      final color = ratio > 0.5
+          ? const Color(0xFFE53E3E)
+          : ratio > 0.2
+          ? const Color(0xFFED8936)
+          : const Color(0xFFF6C90E);
+
+      final size = 10.0 + ratio * 20.0;
+
+      markers.add(
+        Marker(
+          point: LatLng(loc.latitude, loc.longitude),
+          width: size + 24,
+          height: size + 24,
+          child: GestureDetector(
+            onTap: () {
+              setState(() {
+                _selected = _selected?.id == loc.id ? null : loc;
+              });
+              HapticFeedback.selectionClick();
+            },
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Pulse ring for selected
+                if (isSelected)
+                  Container(
+                    width: size + 14 + _pulseCtrl.value * 10,
+                    height: size + 14 + _pulseCtrl.value * 10,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFFF97316)
+                          .withOpacity(0.3 * (1 - _pulseCtrl.value)),
+                    ),
+                  ),
+                // Glow
+                Container(
+                  width: size + 8,
+                  height: size + 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: color.withOpacity(0.22),
+                  ),
+                ),
+                // Fill
+                Container(
+                  width: size,
+                  height: size,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: color,
+                    boxShadow: [
+                      BoxShadow(
+                        color: color.withOpacity(0.4),
+                        blurRadius: 6,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: size * 0.28,
+                      height: size * 0.28,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Economic center star markers
+    if (_showCenters) {
+      for (final center in widget.result.economicCenters) {
+        final sz = center.centerType == 'primary' ? 9.0 : 6.5;
+        markers.add(
+          Marker(
+            point: LatLng(center.latitude, center.longitude),
+            width: 36,
+            height: 36,
+            child: GestureDetector(
+              onTap: () {
+                final loc = widget.result.locations.firstWhere(
+                      (l) => l.province == center.province,
+                  orElse: () => widget.result.locations.first,
+                );
+                setState(() => _selected = loc);
+                HapticFeedback.selectionClick();
+              },
+              child: AnimatedBuilder(
+                animation: _pulseCtrl,
+                builder: (_, __) => CustomPaint(
+                  painter: _StarPainter(
+                    color: AppColors.primaryOrange,
+                    pulseValue: _pulseCtrl.value,
+                    isPrimary: center.centerType == 'primary',
+                    sz: sz,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    return markers;
   }
 
   Widget _buildMapTools(bool isDark) {
@@ -306,12 +474,17 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
       child: Row(
         children: [
           // Zoom buttons
-          _toolBtn(Icons.add, () => setState(() => _scale = (_scale * 1.3).clamp(0.6, 5.0)), isDark),
+          _toolBtn(Icons.add, () => _mapController.move(
+              _mapController.camera.center,
+              _mapController.camera.zoom + 1), isDark),
           const SizedBox(width: 4),
-          _toolBtn(Icons.remove, () => setState(() => _scale = (_scale / 1.3).clamp(0.6, 5.0)), isDark),
+          _toolBtn(Icons.remove, () => _mapController.move(
+              _mapController.camera.center,
+              _mapController.camera.zoom - 1), isDark),
           const SizedBox(width: 4),
-          _toolBtn(Icons.center_focus_strong,
-                  () => setState(() { _scale = 1.0; _offset = Offset.zero; }), isDark),
+          _toolBtn(Icons.center_focus_strong, () {
+            _mapController.move(_center, _zoom);
+          }, isDark),
           const Spacer(),
           // Toggles
           _toggleChip('Pusat', _showCenters,
@@ -379,7 +552,11 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
   Widget _buildSelectedCard(BusinessLocation loc, bool isDark) {
     final total = widget.result.statistics.totalUsaha;
     final pct = total > 0 ? (loc.totalUsaha / total * 100) : 0.0;
-    final maxU = widget.result.locations.map((l) => l.totalUsaha).reduce(max);
+    final nonZero =
+    widget.result.locations.where((l) => l.totalUsaha > 0).toList();
+    final maxU = nonZero.isNotEmpty
+        ? nonZero.map((l) => l.totalUsaha).reduce(max)
+        : 1;
     final ratio = maxU > 0 ? loc.totalUsaha / maxU : 0.0;
 
     return Container(
@@ -424,7 +601,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(_fmt(loc.totalUsaha),
-                  style: TextStyle(
+                  style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w800,
                       color: AppColors.primaryOrange)),
@@ -445,13 +622,13 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
               child: Column(
                 children: [
                   Expanded(
-                      flex: ((1 - ratio) * 100).round(),
+                      flex: ((1 - ratio) * 100).round().clamp(0, 100),
                       child: Container(
                           color: isDark
                               ? AppColors.darkSurface
                               : AppColors.lightSurface)),
                   Expanded(
-                      flex: (ratio * 100).round(),
+                      flex: (ratio * 100).round().clamp(1, 100),
                       child:
                       Container(color: AppColors.primaryOrange)),
                 ],
@@ -466,7 +643,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
   // ─── Analysis panel ────────────────────────────────────────────────────────
   Widget _buildAnalysisPanel(bool isDark) {
     return Container(
-      width: 280,
       decoration: BoxDecoration(
         border: Border(
           left: BorderSide(
@@ -474,11 +650,12 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
               isDark ? AppColors.darkDivider : AppColors.lightDivider),
         ),
       ),
+      // Column must fill full height — tabs + scrollable content + narrative
       child: Column(
+        mainAxisSize: MainAxisSize.max,
         children: [
-          // Tabs
           _buildTabs(isDark),
-          // Tab content
+          // Scrollable tab content — takes all remaining space
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(14),
@@ -489,7 +666,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                   : _buildStatsTab(isDark),
             ),
           ),
-          // Narrative
+          // Narrative bar — fixed at bottom, height constrained
           _buildNarrativeBar(isDark),
         ],
       ),
@@ -530,7 +707,8 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 11,
-                    fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+                    fontWeight:
+                    active ? FontWeight.w700 : FontWeight.w400,
                     color: active
                         ? AppColors.primaryOrange
                         : (isDark
@@ -546,7 +724,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     );
   }
 
-  // Centers tab
   Widget _buildCentersTab(bool isDark) {
     final centers = widget.result.economicCenters;
     if (centers.isEmpty) {
@@ -564,8 +741,8 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                 .labelMedium
                 ?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 10),
-        ...centers.asMap().entries.map((e) =>
-            _centerItem(e.value, e.key, isDark)),
+        ...centers.asMap().entries
+            .map((e) => _centerItem(e.value, e.key, isDark)),
       ],
     );
   }
@@ -585,14 +762,14 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
 
     return GestureDetector(
       onTap: () {
-        // Pan map to this center
-        setState(() {
-          final loc = widget.result.locations.firstWhere(
-                (l) => l.province == c.province,
-            orElse: () => widget.result.locations.first,
-          );
-          _selected = loc;
-        });
+        final loc = widget.result.locations.firstWhere(
+              (l) => l.province == c.province,
+          orElse: () => widget.result.locations.first,
+        );
+        setState(() => _selected = loc);
+        // Pan map to province
+        _mapController.move(
+            LatLng(loc.latitude, loc.longitude), 6.0);
         HapticFeedback.selectionClick();
       },
       child: Container(
@@ -662,7 +839,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     );
   }
 
-  // Insights tab
   Widget _buildInsightsTab(bool isDark) {
     final insights = widget.result.insights;
     if (insights.isEmpty) return const SizedBox();
@@ -675,9 +851,7 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                 .labelMedium
                 ?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 10),
-        ...insights
-            .asMap()
-            .entries
+        ...insights.asMap().entries
             .map((e) => _insightItem(e.value, e.key, isDark)),
       ],
     );
@@ -745,24 +919,22 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
             Wrap(
               spacing: 4,
               runSpacing: 3,
-              children: insight.relatedProvinces
-                  .take(3)
-                  .map((p) => Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                  color: typeColor.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                      color: typeColor.withOpacity(0.2)),
-                ),
-                child: Text(p,
-                    style: TextStyle(
-                        fontSize: 9,
-                        color: typeColor,
-                        fontWeight: FontWeight.w600)),
-              ))
-                  .toList(),
+              children: insight.relatedProvinces.take(3).map((p) =>
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: typeColor.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(6),
+                      border:
+                      Border.all(color: typeColor.withOpacity(0.2)),
+                    ),
+                    child: Text(p,
+                        style: TextStyle(
+                            fontSize: 9,
+                            color: typeColor,
+                            fontWeight: FontWeight.w600)),
+                  )).toList(),
             ),
           ],
         ],
@@ -773,7 +945,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
         .slideX(begin: 0.06);
   }
 
-  // Stats tab
   Widget _buildStatsTab(bool isDark) {
     final s = widget.result.statistics;
     final sorted = s.usahaByProvince.entries.toList()
@@ -792,8 +963,8 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
         const SizedBox(height: 10),
         _statRow('Total Provinsi', s.totalLocations.toString(), isDark),
         _statRow('Total Usaha', _fmt(s.totalUsaha), isDark),
-        _statRow('Rata-rata', _fmt(s.averageUsahaPerLocation.toInt()),
-            isDark),
+        _statRow('Rata-rata',
+            _fmt(s.averageUsahaPerLocation.toInt()), isDark),
         _statRow(
             'Indeks Konsentrasi',
             '${(s.spatialConcentrationIndex * 100).toStringAsFixed(0)}%',
@@ -807,7 +978,6 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                 .labelMedium
                 ?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
-        // Stacked bar
         if (total > 0)
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
@@ -831,10 +1001,8 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                 }),
                 Flexible(
                   flex: ((1 -
-                      top5.fold(
-                          0.0,
-                              (s, e) =>
-                          s + e.value / total)) *
+                      top5.fold(0.0,
+                              (s, e) => s + e.value / total)) *
                       1000)
                       .round()
                       .clamp(0, 1000),
@@ -868,8 +1036,10 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                 Expanded(
                     child: Text(
                       e.value.key,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          fontSize: 10),
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(fontSize: 10),
                       overflow: TextOverflow.ellipsis,
                     )),
                 Text('${pct.toStringAsFixed(1)}%',
@@ -905,10 +1075,17 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     );
   }
 
-  // Narrative
   Widget _buildNarrativeBar(bool isDark) {
+    // Limit narrative to 3 lines maximum to prevent overflow
+    final narrativeText = widget.result.narrativeAnalysis
+        .replaceAll('**', '')
+        .split('\n')
+        .where((l) => l.trim().isNotEmpty)
+        .take(3)
+        .join(' ');
+
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: AppColors.primaryOrange.withOpacity(0.06),
         border: Border(
@@ -917,11 +1094,12 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
               Icon(Icons.auto_awesome,
-                  size: 12, color: AppColors.primaryOrange),
+                  size: 11, color: AppColors.primaryOrange),
               const SizedBox(width: 4),
               Text('Ringkasan Analisis',
                   style: TextStyle(
@@ -930,29 +1108,26 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
                       color: AppColors.primaryOrange)),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 5),
           Text(
-            widget.result.narrativeAnalysis
-                .replaceAll('**', '')
-                .split('\n')
-                .take(4)
-                .join('\n'),
+            narrativeText,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 fontSize: 10,
-                height: 1.5,
+                height: 1.4,
                 color: isDark
                     ? AppColors.darkTextSecondary
                     : AppColors.lightTextSecondary),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
     );
   }
 
-  // ─── Bottom bar ────────────────────────────────────────────────────────────
   Widget _buildBottomBar(bool isDark) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         border: Border(
             top: BorderSide(
@@ -963,26 +1138,32 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
       child: Row(
         children: [
           _dot(const Color(0xFFE53E3E), 'Tinggi', isDark),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           _dot(const Color(0xFFED8936), 'Sedang', isDark),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           _dot(const Color(0xFFECC94B), 'Rendah', isDark),
-          const SizedBox(width: 12),
           if (_showCenters) ...[
+            const SizedBox(width: 10),
             Icon(Icons.star, size: 11, color: AppColors.primaryOrange),
-            const SizedBox(width: 4),
+            const SizedBox(width: 3),
             Text('Pusat Ekonomi',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    fontSize: 10,
-                    color: AppColors.primaryOrange)),
+                    fontSize: 9, color: AppColors.primaryOrange)),
           ],
           const Spacer(),
-          Text('Sumber: BPS Sensus Ekonomi 2016',
+          // Flexible prevents this text from causing overflow
+          Flexible(
+            child: Text(
+              'Sumber: BPS SE 2016',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: isDark
                       ? AppColors.darkTextTertiary
                       : AppColors.lightTextTertiary,
-                  fontSize: 9)),
+                  fontSize: 9),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
         ],
       ),
     );
@@ -1016,32 +1197,26 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
     );
   }
 
-  // ─── Tap detection ─────────────────────────────────────────────────────────
-  void _handleTap(Offset localPos) {
-    final painter = _FSMapPainter(
-      locations: widget.result.locations,
-      economicCenters: [],
-      selectedLocation: null,
-      showCenters: false,
-      showHeatmap: false,
-      isDark: true,
-      scale: _scale,
-      offset: _offset,
-      pulseValue: 0,
-    );
+  void _handleMapTap(LatLng point) {
+    // Find nearest location within ~50km tap radius
+    BusinessLocation? nearest;
+    double minDist = double.infinity;
 
     for (final loc in widget.result.locations) {
-      final pos = painter.project(
-          loc.latitude, loc.longitude, _canvasSize);
-      if ((pos - localPos).distance < 20) {
-        setState(() {
-          _selected = _selected?.id == loc.id ? null : loc;
-        });
-        HapticFeedback.selectionClick();
-        return;
+      final dlat = loc.latitude - point.latitude;
+      final dlng = loc.longitude - point.longitude;
+      final dist = sqrt(dlat * dlat + dlng * dlng);
+      if (dist < minDist && dist < 1.0) {
+        // ~1 degree ≈ 111km, use 1.0 as threshold
+        minDist = dist;
+        nearest = loc;
       }
     }
-    setState(() => _selected = null);
+
+    setState(() {
+      _selected = nearest == _selected ? null : nearest;
+    });
+    if (nearest != null) HapticFeedback.selectionClick();
   }
 
   String _fmt(int n) => n
@@ -1050,201 +1225,47 @@ class _SpatialFullscreenMapState extends State<SpatialFullscreenMap>
           (m) => '${m[1]}.');
 }
 
-// ─── Fullscreen Painter (same logic, larger canvas) ────────────────────────
+// ─── Star marker painter ────────────────────────────────────────────────────
 
-class _GridPainter extends CustomPainter {
-  final bool isDark;
-  _GridPainter({required this.isDark});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final p = Paint()
-      ..color = (isDark ? Colors.white : Colors.blueGrey).withOpacity(0.05)
-      ..strokeWidth = 0.5;
-    for (double y = 0; y < size.height; y += 40) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
-    }
-    for (double x = 0; x < size.width; x += 40) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), p);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_GridPainter o) => false;
-}
-
-class _FSMapPainter extends CustomPainter {
-  final List<BusinessLocation> locations;
-  final List<EconomicCenter> economicCenters;
-  final BusinessLocation? selectedLocation;
-  final bool showCenters;
-  final bool showHeatmap;
-  final bool isDark;
-  final double scale;
-  final Offset offset;
+class _StarPainter extends CustomPainter {
+  final Color color;
   final double pulseValue;
+  final bool isPrimary;
+  final double sz;
 
-  _FSMapPainter({
-    required this.locations,
-    required this.economicCenters,
-    required this.selectedLocation,
-    required this.showCenters,
-    required this.showHeatmap,
-    required this.isDark,
-    required this.scale,
-    required this.offset,
+  _StarPainter({
+    required this.color,
     required this.pulseValue,
+    required this.isPrimary,
+    required this.sz,
   });
 
-  static const double _minLat = -11.5;
-  static const double _maxLat = 6.5;
-  static const double _minLng = 94.5;
-  static const double _maxLng = 142.0;
-  static const double _pad = 24.0;
-
-  Offset project(double lat, double lng, Size size) {
-    final w = size.width - _pad * 2;
-    final h = size.height - _pad * 2;
-    final x = _pad + (lng - _minLng) / (_maxLng - _minLng) * w;
-    final y = _pad + (1.0 - (lat - _minLat) / (_maxLat - _minLat)) * h;
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    return Offset(
-      cx + (x - cx) * scale + offset.dx,
-      cy + (y - cy) * scale + offset.dy,
-    );
-  }
-
   @override
   void paint(Canvas canvas, Size size) {
-    if (locations.isEmpty) return;
-    final nonZero = locations.where((l) => l.totalUsaha > 0).toList();
-    if (nonZero.isEmpty) return;
-    final maxU = nonZero.map((l) => l.totalUsaha).reduce(max);
+    final center = Offset(size.width / 2, size.height / 2);
 
-    if (showHeatmap) {
-      for (final loc in nonZero) {
-        final pos = project(loc.latitude, loc.longitude, size);
-        final intensity = loc.totalUsaha / maxU;
-        final r = 20.0 + intensity * 48.0;
-        canvas.drawCircle(
-          pos,
-          r,
-          Paint()
-            ..shader = RadialGradient(colors: [
-              const Color(0xFFEF4444).withOpacity(0.3 * intensity),
-              Colors.transparent,
-            ]).createShader(Rect.fromCircle(center: pos, radius: r)),
-        );
-      }
-    }
+    // Pulsing ring
+    canvas.drawCircle(
+      center,
+      sz + 5 + pulseValue * 6,
+      Paint()
+        ..color = color.withOpacity(0.18 * (1 - pulseValue * 0.4))
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
 
-    // Corridor lines
-    final top6 = ([...nonZero]
-      ..sort((a, b) => b.totalUsaha.compareTo(a.totalUsaha)))
-        .take(6)
-        .toList();
-    final cp = Paint()
-      ..color = const Color(0xFFF97316).withOpacity(0.18)
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-    for (int i = 0; i < top6.length - 1; i++) {
-      canvas.drawLine(
-        project(top6[i].latitude, top6[i].longitude, size),
-        project(top6[i + 1].latitude, top6[i + 1].longitude, size),
-        cp,
-      );
-    }
-
-    // Dots
-    for (final loc in locations) {
-      if (loc.totalUsaha == 0) continue;
-      final pos = project(loc.latitude, loc.longitude, size);
-      final ratio = loc.totalUsaha / maxU;
-      final isSel = selectedLocation?.id == loc.id;
-      final r = 4.5 + ratio * 16.0;
-
-      final color = ratio > 0.5
-          ? const Color(0xFFE53E3E)
-          : ratio > 0.2
-          ? const Color(0xFFED8936)
-          : const Color(0xFFECC94B);
-
-      if (isSel) {
-        canvas.drawCircle(
-          pos,
-          r + 6 + pulseValue * 8,
-          Paint()
-            ..color = const Color(0xFFF97316)
-                .withOpacity(0.28 * (1 - pulseValue)),
-        );
-      }
-      canvas.drawCircle(pos, r + 3, Paint()..color = color.withOpacity(0.2));
-      canvas.drawCircle(pos, r, Paint()..color = color);
-      canvas.drawCircle(
-          pos, r * 0.28, Paint()..color = Colors.white.withOpacity(0.75));
-
-      if (ratio > 0.35 || isSel) {
-        final parts = loc.province.split(' ');
-        final short = parts.length >= 2 ? parts.last : loc.province;
-        _drawLabel(canvas, pos, short, r, isSel);
-      }
-    }
-
-    // Centers
-    if (showCenters) {
-      for (final c in economicCenters) {
-        final pos = project(c.latitude, c.longitude, size);
-        final isPrimary = c.centerType == 'primary';
-        final sz = isPrimary ? 9.0 : 6.5;
-        canvas.drawCircle(
-          pos,
-          sz + 6 + pulseValue * 6,
-          Paint()
-            ..color = const Color(0xFFF97316)
-                .withOpacity(0.18 * (1 - pulseValue * 0.4))
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5,
-        );
-        _drawStar(canvas, pos, sz, const Color(0xFFF97316));
-      }
-    }
-  }
-
-  void _drawLabel(Canvas canvas, Offset p, String t, double r, bool bold) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: t,
-        style: TextStyle(
-          color: isDark ? Colors.white : Colors.black87,
-          fontSize: bold ? 11 : 9,
-          fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
-          shadows: [
-            Shadow(
-              color: isDark
-                  ? Colors.black.withOpacity(0.9)
-                  : Colors.white.withOpacity(0.9),
-              blurRadius: 4,
-            ),
-          ],
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, Offset(p.dx - tp.width / 2, p.dy + r + 3));
-  }
-
-  void _drawStar(Canvas canvas, Offset c, double sz, Color color) {
-    final path = Path();
+    // Star
+    final path = ui.Path();
     const pts = 5;
     for (int i = 0; i < pts * 2; i++) {
       final angle = (i * pi / pts) - pi / 2;
       final rad = i.isEven ? sz : sz * 0.42;
-      final x = c.dx + rad * cos(angle);
-      final y = c.dy + rad * sin(angle);
+      final x = center.dx + rad * cos(angle);
+      final y = center.dy + rad * sin(angle);
       i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
     }
     path.close();
+
     canvas.drawPath(
         path,
         Paint()
@@ -1254,11 +1275,6 @@ class _FSMapPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_FSMapPainter o) =>
-      o.selectedLocation != selectedLocation ||
-          o.pulseValue != pulseValue ||
-          o.scale != scale ||
-          o.offset != offset ||
-          o.showCenters != showCenters ||
-          o.showHeatmap != showHeatmap;
+  bool shouldRepaint(_StarPainter o) =>
+      o.pulseValue != pulseValue || o.isPrimary != isPrimary;
 }
