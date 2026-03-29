@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:provider/provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/chat_models.dart';
+import '../../../core/providers/chat_provider.dart';
 import 'message_bubble.dart';
 import 'visualization_card.dart';
 import 'policy_card.dart';
 import 'insight_card.dart';
+import '../../widgets/spatial_analysis_card.dart';
 
 class ChatMessageList extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -31,9 +34,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   void didUpdateWidget(ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.messages.length > oldWidget.messages.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToBottom();
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
   }
 
@@ -65,29 +66,37 @@ class _ChatMessageListState extends State<ChatMessageList> {
         if (index == widget.messages.length) {
           return _buildLoadingIndicator(isDark);
         }
-
         final message = widget.messages[index];
         return _buildMessageItem(context, message, isDark, index);
       },
     );
   }
 
-  Widget _buildMessageItem(BuildContext context, ChatMessage message, bool isDark, int index) {
+  Widget _buildMessageItem(
+      BuildContext context, ChatMessage message, bool isDark, int index) {
     final isUser = message.isUser;
+    final chatProvider = context.watch<ChatProvider>();
+    final spatialResult = chatProvider.getSpatialResult(message.id);
 
     return Column(
-      crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      crossAxisAlignment:
+      isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
-        // Message Bubble
-        MessageBubble(
-          message: message,
-          isUser: isUser,
-        ).animate(delay: Duration(milliseconds: index * 50))
+        // ── Message bubble ──────────────────────────────────────────
+        MessageBubble(message: message, isUser: isUser)
+            .animate(delay: Duration(milliseconds: index * 50))
             .fadeIn(duration: 300.ms)
             .slideX(begin: isUser ? 0.1 : -0.1),
 
-        // Visualizations
-        if (message.visualizations != null && message.visualizations!.isNotEmpty) ...[
+        // ── Spatial Map & Analysis (NEW) ────────────────────────────
+        if (!isUser && spatialResult != null) ...[
+          const SizedBox(height: 12),
+          SpatialAnalysisCard(result: spatialResult),
+        ],
+
+        // ── Regular Visualizations ──────────────────────────────────
+        if (message.visualizations != null &&
+            message.visualizations!.isNotEmpty) ...[
           const SizedBox(height: 12),
           ...message.visualizations!.map((viz) => Padding(
             padding: const EdgeInsets.only(bottom: 8),
@@ -95,13 +104,13 @@ class _ChatMessageListState extends State<ChatMessageList> {
           )),
         ],
 
-        // Insights
+        // ── Insights ─────────────────────────────────────────────────
         if (message.insights != null && message.insights!.isNotEmpty) ...[
           const SizedBox(height: 12),
           InsightCard(insights: message.insights!),
         ],
 
-        // Policies
+        // ── Policies ─────────────────────────────────────────────────
         if (message.policies != null && message.policies!.isNotEmpty) ...[
           const SizedBox(height: 12),
           ...message.policies!.map((policy) => Padding(
@@ -121,7 +130,6 @@ class _ChatMessageListState extends State<ChatMessageList> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // AI Avatar
           Container(
             width: 36,
             height: 36,
@@ -136,8 +144,6 @@ class _ChatMessageListState extends State<ChatMessageList> {
             ),
           ),
           const SizedBox(width: 12),
-          
-          // Loading Animation
           Expanded(
             child: Container(
               padding: const EdgeInsets.all(16),
@@ -151,18 +157,16 @@ class _ChatMessageListState extends State<ChatMessageList> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Typing indicator dots
                   Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: List.generate(3, (index) {
-                      return Container(
+                    children: List.generate(
+                      3,
+                          (index) => Container(
                         margin: const EdgeInsets.only(right: 4),
                         child: _buildTypingDot(index),
-                      );
-                    }),
+                      ),
+                    ),
                   ),
-                  
-                  // Status text
                   if (widget.scrapingStatus == 'in_progress') ...[
                     const SizedBox(height: 12),
                     Row(
@@ -172,13 +176,15 @@ class _ChatMessageListState extends State<ChatMessageList> {
                           height: 14,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation(AppColors.primaryOrange),
+                            valueColor: AlwaysStoppedAnimation(
+                                AppColors.primaryOrange),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'Gathering data from sources...',
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          'Memproses data & analisis spasial…',
+                          style:
+                          Theme.of(context).textTheme.labelSmall?.copyWith(
                             color: AppColors.primaryOrange,
                           ),
                         ),
@@ -203,20 +209,18 @@ class _ChatMessageListState extends State<ChatMessageList> {
         color: AppColors.primaryOrange.withOpacity(0.6),
       ),
     )
-        .animate(
-          onPlay: (controller) => controller.repeat(),
-        )
+        .animate(onPlay: (controller) => controller.repeat())
         .scale(
-          begin: const Offset(0.8, 0.8),
-          end: const Offset(1.2, 1.2),
-          duration: 600.ms,
-          delay: Duration(milliseconds: index * 150),
-        )
+      begin: const Offset(0.8, 0.8),
+      end: const Offset(1.2, 1.2),
+      duration: 600.ms,
+      delay: Duration(milliseconds: index * 150),
+    )
         .then()
         .scale(
-          begin: const Offset(1.2, 1.2),
-          end: const Offset(0.8, 0.8),
-          duration: 600.ms,
-        );
+      begin: const Offset(1.2, 1.2),
+      end: const Offset(0.8, 0.8),
+      duration: 600.ms,
+    );
   }
 }

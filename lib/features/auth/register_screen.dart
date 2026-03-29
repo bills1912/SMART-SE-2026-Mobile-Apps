@@ -40,15 +40,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     final authProvider = context.read<AuthProvider>();
     final success = await authProvider.register(
-      _nameController.text.trim(),      // ✅ name
-      _emailController.text.trim(),     // ✅ email
-      _passwordController.text,         // ✅ password
+      _nameController.text.trim(),
+      _emailController.text.trim(),
+      _passwordController.text,
     );
 
     setState(() => _isLoading = false);
 
     if (success && mounted) {
-      Navigator.pushReplacementNamed(context, '/dashboard');
+      // FIX: Clear entire navigation stack so pressing back exits the app
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/dashboard',
+            (route) => false,
+      );
     } else if (mounted) {
       _showError(authProvider.error ?? 'Registration failed');
     }
@@ -73,8 +78,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
-          gradient: isDark 
-              ? AppColors.darkBackgroundGradient 
+          gradient: isDark
+              ? AppColors.darkBackgroundGradient
               : AppColors.lightBackgroundGradient,
         ),
         child: SafeArea(
@@ -82,13 +87,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                minHeight: size.height - MediaQuery.of(context).padding.vertical,
+                minHeight: size.height -
+                    MediaQuery.of(context).padding.vertical,
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const SizedBox(height: 20),
-                  
+
                   // Back Button
                   Align(
                     alignment: Alignment.centerLeft,
@@ -100,60 +106,53 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           color: isDark ? AppColors.darkCard : Colors.white,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                            color: isDark
+                                ? AppColors.darkBorder
+                                : AppColors.lightBorder,
                           ),
                         ),
                         child: Icon(
                           Icons.arrow_back_ios_new,
                           size: 18,
-                          color: isDark 
-                              ? AppColors.darkTextPrimary 
+                          color: isDark
+                              ? AppColors.darkTextPrimary
                               : AppColors.lightTextPrimary,
                         ),
                       ),
                     ),
-                  )
-                      .animate()
-                      .fadeIn()
-                      .slideX(begin: -0.3),
-                  
+                  ).animate().fadeIn().slideX(begin: -0.3),
+
                   const SizedBox(height: 20),
-                  
+
                   // Logo
                   _buildLogo()
                       .animate()
                       .scale(duration: 500.ms, curve: Curves.elasticOut)
                       .fadeIn(),
-                  
+
                   const SizedBox(height: 24),
-                  
+
                   // Title
                   Text(
                     'Create Account',
                     style: Theme.of(context).textTheme.displaySmall?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
-                  )
-                      .animate(delay: 200.ms)
-                      .fadeIn()
-                      .slideY(begin: 0.3),
-                  
+                  ).animate(delay: 200.ms).fadeIn().slideY(begin: 0.3),
+
                   const SizedBox(height: 8),
-                  
+
                   Text(
                     'Join SMART SE2026 Agentic AI',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: isDark 
-                          ? AppColors.darkTextSecondary 
+                      color: isDark
+                          ? AppColors.darkTextSecondary
                           : AppColors.lightTextSecondary,
                     ),
-                  )
-                      .animate(delay: 300.ms)
-                      .fadeIn()
-                      .slideY(begin: 0.3),
-                  
+                  ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.3),
+
                   const SizedBox(height: 40),
-                  
+
                   // Register Card
                   GlassCard(
                     child: Padding(
@@ -179,9 +178,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 .animate(delay: 400.ms)
                                 .fadeIn()
                                 .slideX(begin: -0.1),
-                            
+
                             const SizedBox(height: 16),
-                            
+
                             // Email Field
                             CustomTextField(
                               controller: _emailController,
@@ -202,9 +201,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 .animate(delay: 500.ms)
                                 .fadeIn()
                                 .slideX(begin: -0.1),
-                            
+
                             const SizedBox(height: 16),
-                            
+
                             // Password Field
                             CustomTextField(
                               controller: _passwordController,
@@ -214,15 +213,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               prefixIcon: Icons.lock_outline,
                               suffixIcon: IconButton(
                                 icon: Icon(
-                                  _obscurePassword 
-                                      ? Icons.visibility_off_outlined 
+                                  _obscurePassword
+                                      ? Icons.visibility_off_outlined
                                       : Icons.visibility_outlined,
-                                  color: isDark 
-                                      ? AppColors.darkTextTertiary 
+                                  color: isDark
+                                      ? AppColors.darkTextTertiary
                                       : AppColors.lightTextTertiary,
                                 ),
                                 onPressed: () {
-                                  setState(() => _obscurePassword = !_obscurePassword);
+                                  setState(() =>
+                                  _obscurePassword = !_obscurePassword);
                                 },
                               ),
                               validator: (value) {
@@ -238,9 +238,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 .animate(delay: 600.ms)
                                 .fadeIn()
                                 .slideX(begin: -0.1),
-                            
+
                             const SizedBox(height: 16),
-                            
+
                             // Confirm Password Field
                             CustomTextField(
                               controller: _confirmPasswordController,
@@ -250,15 +250,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               prefixIcon: Icons.lock_outline,
                               suffixIcon: IconButton(
                                 icon: Icon(
-                                  _obscureConfirmPassword 
-                                      ? Icons.visibility_off_outlined 
+                                  _obscureConfirmPassword
+                                      ? Icons.visibility_off_outlined
                                       : Icons.visibility_outlined,
-                                  color: isDark 
-                                      ? AppColors.darkTextTertiary 
+                                  color: isDark
+                                      ? AppColors.darkTextTertiary
                                       : AppColors.lightTextTertiary,
                                 ),
                                 onPressed: () {
-                                  setState(() => _obscureConfirmPassword = !_obscureConfirmPassword);
+                                  setState(() => _obscureConfirmPassword =
+                                  !_obscureConfirmPassword);
                                 },
                               ),
                               validator: (value) {
@@ -274,9 +275,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 .animate(delay: 700.ms)
                                 .fadeIn()
                                 .slideX(begin: -0.1),
-                            
+
                             const SizedBox(height: 24),
-                            
+
                             // Register Button
                             GradientButton(
                               onPressed: _isLoading ? null : _handleRegister,
@@ -296,13 +297,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                     ),
-                  )
-                      .animate(delay: 400.ms)
-                      .fadeIn()
-                      .slideY(begin: 0.2),
-                  
+                  ).animate(delay: 400.ms).fadeIn().slideY(begin: 0.2),
+
                   const SizedBox(height: 24),
-                  
+
                   // Login Link
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -310,19 +308,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       Text(
                         "Already have an account? ",
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: isDark 
-                              ? AppColors.darkTextSecondary 
+                          color: isDark
+                              ? AppColors.darkTextSecondary
                               : AppColors.lightTextSecondary,
                         ),
                       ),
                       GestureDetector(
                         onTap: () => Navigator.pop(context),
                         child: ShaderMask(
-                          shaderCallback: (bounds) => 
+                          shaderCallback: (bounds) =>
                               AppColors.primaryGradient.createShader(bounds),
                           child: Text(
                             'Sign In',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            style:
+                            Theme.of(context).textTheme.bodyMedium?.copyWith(
                               color: Colors.white,
                               fontWeight: FontWeight.w600,
                             ),
@@ -330,10 +329,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                     ],
-                  )
-                      .animate(delay: 900.ms)
-                      .fadeIn(),
-                  
+                  ).animate(delay: 900.ms).fadeIn(),
+
                   const SizedBox(height: 40),
                 ],
               ),

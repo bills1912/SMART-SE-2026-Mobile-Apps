@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
@@ -25,12 +26,14 @@ class _ChatScreenState extends State<ChatScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _isRecording = false;
 
+  // FIX: Track if back was pressed once already (for double-tap-to-exit UX)
+  DateTime? _lastBackPressTime;
+
   @override
   void initState() {
     super.initState();
     _messageController.addListener(() => setState(() {}));
-    
-    // Initialize chat provider
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final chatProvider = context.read<ChatProvider>();
       chatProvider.createNewChat();
@@ -69,7 +72,32 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _toggleRecording() {
     setState(() => _isRecording = !_isRecording);
-    // TODO: Implement voice recording
+  }
+
+  /// FIX: Handle back button press — show toast on first press, exit on second
+  Future<bool> _onWillPop() async {
+    final now = DateTime.now();
+    final isDoubleBack = _lastBackPressTime != null &&
+        now.difference(_lastBackPressTime!) < const Duration(seconds: 2);
+
+    if (isDoubleBack) {
+      // Exit the app
+      SystemNavigator.pop();
+      return true;
+    }
+
+    _lastBackPressTime = now;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Tekan sekali lagi untuk keluar'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+
+    return false;
   }
 
   @override
@@ -78,53 +106,58 @@ class _ChatScreenState extends State<ChatScreen> {
     final chatProvider = context.watch<ChatProvider>();
     final isNewChat = chatProvider.currentSession?.id.isEmpty ?? true;
     final messages = chatProvider.currentSession?.messages ?? [];
-    final realMessages = messages.where((m) => !m.id.startsWith('welcome_')).toList();
+    final realMessages =
+    messages.where((m) => !m.id.startsWith('welcome_')).toList();
 
-    return Scaffold(
-      key: _scaffoldKey,
-      drawer: ChatSidebar(
-        onNewChat: _handleNewChat,
-        onSelectSession: _handleSwitchSession,
-      ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: isDark 
-              ? AppColors.darkBackgroundGradient 
-              : AppColors.lightBackgroundGradient,
+    // FIX: Wrap with WillPopScope to intercept back button on dashboard
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        key: _scaffoldKey,
+        drawer: ChatSidebar(
+          onNewChat: _handleNewChat,
+          onSelectSession: _handleSwitchSession,
         ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // App Bar
-              _buildAppBar(isDark),
-              
-              // Main Content
-              Expanded(
-                child: isNewChat || realMessages.isEmpty
-                    ? WelcomeView(
-                        messageController: _messageController,
-                        onSend: _handleSendMessage,
-                        onVoice: _toggleRecording,
-                        isRecording: _isRecording,
-                        isLoading: chatProvider.isSending,
-                      )
-                    : Column(
-                        children: [
-                          // Messages
-                          Expanded(
-                            child: ChatMessageList(
-                              messages: realMessages,
-                              isLoading: chatProvider.isSending,
-                              scrapingStatus: chatProvider.scrapingStatus,
-                            ),
-                          ),
-                          
-                          // Input Area
-                          _buildInputArea(isDark, chatProvider.isSending),
-                        ],
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: isDark
+                ? AppColors.darkBackgroundGradient
+                : AppColors.lightBackgroundGradient,
+          ),
+          child: SafeArea(
+            child: Column(
+              children: [
+                // App Bar
+                _buildAppBar(isDark),
+
+                // Main Content
+                Expanded(
+                  child: isNewChat || realMessages.isEmpty
+                      ? WelcomeView(
+                    messageController: _messageController,
+                    onSend: _handleSendMessage,
+                    onVoice: _toggleRecording,
+                    isRecording: _isRecording,
+                    isLoading: chatProvider.isSending,
+                  )
+                      : Column(
+                    children: [
+                      // Messages
+                      Expanded(
+                        child: ChatMessageList(
+                          messages: realMessages,
+                          isLoading: chatProvider.isSending,
+                          scrapingStatus: chatProvider.scrapingStatus,
+                        ),
                       ),
-              ),
-            ],
+
+                      // Input Area
+                      _buildInputArea(isDark, chatProvider.isSending),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -133,7 +166,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildAppBar(bool isDark) {
     final themeProvider = context.watch<ThemeProvider>();
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
@@ -143,10 +176,12 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
             icon: Icon(
               Icons.menu_rounded,
-              color: isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary,
+              color: isDark
+                  ? AppColors.darkTextPrimary
+                  : AppColors.lightTextPrimary,
             ),
           ),
-          
+
           // Logo & Title
           Container(
             width: 32,
@@ -171,7 +206,7 @@ class _ChatScreenState extends State<ChatScreen> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          
+
           // Theme Toggle
           IconButton(
             onPressed: () => themeProvider.toggleTheme(),
@@ -179,13 +214,15 @@ class _ChatScreenState extends State<ChatScreen> {
               themeProvider.themeModeType == ThemeModeType.dark
                   ? Icons.dark_mode
                   : themeProvider.themeModeType == ThemeModeType.light
-                      ? Icons.light_mode
-                      : Icons.auto_mode,
-              color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                  ? Icons.light_mode
+                  : Icons.auto_mode,
+              color: isDark
+                  ? AppColors.darkTextSecondary
+                  : AppColors.lightTextSecondary,
               size: 22,
             ),
           ),
-          
+
           // User Menu
           const UserMenu(),
         ],
@@ -195,7 +232,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildInputArea(bool isDark, bool isLoading) {
     final chatProvider = context.watch<ChatProvider>();
-    
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -241,8 +278,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   decoration: InputDecoration(
                     hintText: 'Reply...',
                     hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: isDark 
-                          ? AppColors.darkTextTertiary 
+                      color: isDark
+                          ? AppColors.darkTextTertiary
                           : AppColors.lightTextTertiary,
                     ),
                     border: InputBorder.none,
@@ -250,7 +287,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   child: Row(
                     children: [
                       // Voice Button
@@ -260,25 +298,25 @@ class _ChatScreenState extends State<ChatScreen> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: _isRecording 
+                            color: _isRecording
                                 ? AppColors.error.withOpacity(0.1)
                                 : Colors.transparent,
                             borderRadius: BorderRadius.circular(18),
                           ),
                           child: Icon(
                             _isRecording ? Icons.stop : Icons.mic_none,
-                            color: _isRecording 
+                            color: _isRecording
                                 ? AppColors.error
-                                : (isDark 
-                                    ? AppColors.darkTextTertiary 
-                                    : AppColors.lightTextTertiary),
+                                : (isDark
+                                ? AppColors.darkTextTertiary
+                                : AppColors.lightTextTertiary),
                             size: 20,
                           ),
                         ),
                       ),
-                      
+
                       const Spacer(),
-                      
+
                       // Send Button
                       GestureDetector(
                         onTap: isLoading ? null : _handleSendMessage,
@@ -286,31 +324,39 @@ class _ChatScreenState extends State<ChatScreen> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            gradient: _messageController.text.trim().isNotEmpty && !isLoading
+                            gradient: _messageController.text
+                                .trim()
+                                .isNotEmpty &&
+                                !isLoading
                                 ? AppColors.primaryGradient
                                 : null,
-                            color: _messageController.text.trim().isEmpty || isLoading
-                                ? (isDark ? AppColors.darkBorder : AppColors.lightBorder)
+                            color: _messageController.text.trim().isEmpty ||
+                                isLoading
+                                ? (isDark
+                                ? AppColors.darkBorder
+                                : AppColors.lightBorder)
                                 : null,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: isLoading
                               ? const Padding(
-                                  padding: EdgeInsets.all(8),
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation(Colors.white),
-                                  ),
-                                )
+                            padding: EdgeInsets.all(8),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation(
+                                  Colors.white),
+                            ),
+                          )
                               : Icon(
-                                  Icons.send_rounded,
-                                  color: _messageController.text.trim().isNotEmpty
-                                      ? Colors.white
-                                      : (isDark 
-                                          ? AppColors.darkTextTertiary 
-                                          : AppColors.lightTextTertiary),
-                                  size: 18,
-                                ),
+                            Icons.send_rounded,
+                            color:
+                            _messageController.text.trim().isNotEmpty
+                                ? Colors.white
+                                : (isDark
+                                ? AppColors.darkTextTertiary
+                                : AppColors.lightTextTertiary),
+                            size: 18,
+                          ),
                         ),
                       ),
                     ],
@@ -319,9 +365,9 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-          
+
           const SizedBox(height: 8),
-          
+
           // Status Indicators
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -334,7 +380,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     size: 12,
                     color: chatProvider.scrapingStatus == 'in_progress'
                         ? AppColors.primaryOrange
-                        : (isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary),
+                        : (isDark
+                        ? AppColors.darkTextTertiary
+                        : AppColors.lightTextTertiary),
                   ),
                   const SizedBox(width: 4),
                   Text(
@@ -344,14 +392,16 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: chatProvider.scrapingStatus == 'in_progress'
                           ? AppColors.primaryOrange
-                          : (isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary),
+                          : (isDark
+                          ? AppColors.darkTextTertiary
+                          : AppColors.lightTextTertiary),
                     ),
                   ),
                 ],
               ),
-              
+
               const SizedBox(width: 16),
-              
+
               // Connection Status
               Row(
                 children: [
@@ -378,13 +428,15 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ],
           ),
-          
+
           const SizedBox(height: 4),
-          
+
           Text(
             'AI can make mistakes. Verify info.',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary,
+              color: isDark
+                  ? AppColors.darkTextTertiary
+                  : AppColors.lightTextTertiary,
               fontSize: 10,
             ),
           ),

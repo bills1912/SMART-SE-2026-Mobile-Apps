@@ -23,9 +23,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isGoogleLoading = false;
   bool _obscurePassword = true;
 
-  // Google Sign In instance
-  // Android Client ID sudah didaftarkan di Google Cloud Console
-  // dengan SHA-1 dari upload-keystore.jks
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: [
       'email',
@@ -54,7 +51,12 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = false);
 
     if (success && mounted) {
-      Navigator.pushReplacementNamed(context, '/dashboard');
+      // FIX: Clear entire navigation stack so pressing back exits the app
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/dashboard',
+            (route) => false,
+      );
     } else if (mounted) {
       _showError(authProvider.error ?? 'Login failed');
     }
@@ -64,16 +66,13 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isGoogleLoading = true);
 
     try {
-      // Sign out first to ensure account picker is shown
       await _googleSignIn.signOut();
 
       print('[LoginScreen] Starting Google Sign In...');
 
-      // Trigger the Google Sign In flow
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
 
       if (googleUser == null) {
-        // User cancelled the sign in
         print('[LoginScreen] User cancelled Google Sign In');
         setState(() => _isGoogleLoading = false);
         return;
@@ -84,12 +83,11 @@ class _LoginScreenState extends State<LoginScreen> {
       print('[LoginScreen] - Name: ${googleUser.displayName}');
       print('[LoginScreen] - Photo: ${googleUser.photoUrl}');
 
-      // Send to backend (tanpa idToken karena tidak pakai serverClientId)
       print('[LoginScreen] Sending to backend...');
 
       final authProvider = context.read<AuthProvider>();
       final success = await authProvider.loginWithGoogle(
-        idToken: '', // Kosong karena tidak pakai Web Client ID
+        idToken: '',
         email: googleUser.email,
         name: googleUser.displayName ?? googleUser.email.split('@')[0],
         picture: googleUser.photoUrl,
@@ -99,9 +97,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (success && mounted) {
         print('[LoginScreen] Login successful, navigating to dashboard');
-        print('[LoginScreen] User ID: ${authProvider.user?.userId}');
-        print('[LoginScreen] User Email: ${authProvider.user?.email}');
-        Navigator.pushReplacementNamed(context, '/dashboard');
+        // FIX: Clear entire navigation stack so pressing back exits the app
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          '/dashboard',
+              (route) => false,
+        );
       } else if (mounted) {
         print('[LoginScreen] Login failed: ${authProvider.error}');
         _showError(authProvider.error ?? 'Google login failed');
@@ -154,181 +155,198 @@ class _LoginScreenState extends State<LoginScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final size = MediaQuery.of(context).size;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
-    final double safeBottomPadding = bottomPadding > 0 ? (bottomPadding + 20).toDouble() : 40.0;
+    final double safeBottomPadding =
+    bottomPadding > 0 ? (bottomPadding + 20).toDouble() : 40.0;
 
-    return Scaffold(
-      extendBody: true,
-      extendBodyBehindAppBar: true,
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: isDark
-              ? AppColors.darkBackgroundGradient
-              : AppColors.lightBackgroundGradient,
-        ),
-        child: SafeArea(
-          bottom: false,
-          child: SingleChildScrollView(
-            padding: EdgeInsets.only(
-              left: 24,
-              right: 24,
-              bottom: safeBottomPadding,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: size.height - MediaQuery.of(context).padding.top - safeBottomPadding,
+    // FIX: Wrap with WillPopScope to prevent back button from going to splash
+    return WillPopScope(
+      onWillPop: () async {
+        // Allow back button to exit the app from login screen
+        return true;
+      },
+      child: Scaffold(
+        extendBody: true,
+        extendBodyBehindAppBar: true,
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: isDark
+                ? AppColors.darkBackgroundGradient
+                : AppColors.lightBackgroundGradient,
+          ),
+          child: SafeArea(
+            bottom: false,
+            child: SingleChildScrollView(
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                bottom: safeBottomPadding,
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const SizedBox(height: 40),
-                  _buildLogo()
-                      .animate()
-                      .scale(duration: 500.ms, curve: Curves.elasticOut)
-                      .fadeIn(),
-                  const SizedBox(height: 24),
-                  Text(
-                    'SMART SE2026',
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  )
-                      .animate(delay: 200.ms)
-                      .fadeIn()
-                      .slideY(begin: 0.3),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Agentic AI for Analysis',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: isDark
-                          ? AppColors.darkTextSecondary
-                          : AppColors.lightTextSecondary,
-                    ),
-                  )
-                      .animate(delay: 300.ms)
-                      .fadeIn()
-                      .slideY(begin: 0.3),
-                  const SizedBox(height: 48),
-                  GlassCard(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _buildGoogleButton()
-                                .animate(delay: 400.ms)
-                                .fadeIn()
-                                .slideY(begin: 0.3),
-                            const SizedBox(height: 24),
-                            _buildDivider(isDark)
-                                .animate(delay: 500.ms)
-                                .fadeIn(),
-                            const SizedBox(height: 24),
-                            CustomTextField(
-                              controller: _emailController,
-                              label: 'Email',
-                              hint: 'your@email.com',
-                              keyboardType: TextInputType.emailAddress,
-                              prefixIcon: Icons.email_outlined,
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Please enter your email';
-                                }
-                                if (!value.contains('@')) {
-                                  return 'Please enter a valid email';
-                                }
-                                return null;
-                              },
-                            )
-                                .animate(delay: 600.ms)
-                                .fadeIn()
-                                .slideX(begin: -0.1),
-                            const SizedBox(height: 16),
-                            CustomTextField(
-                              controller: _passwordController,
-                              label: 'Password',
-                              hint: '••••••••',
-                              obscureText: _obscurePassword,
-                              prefixIcon: Icons.lock_outline,
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility_off_outlined
-                                      : Icons.visibility_outlined,
-                                  color: isDark
-                                      ? AppColors.darkTextTertiary
-                                      : AppColors.lightTextTertiary,
-                                ),
-                                onPressed: () {
-                                  setState(() => _obscurePassword = !_obscurePassword);
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: size.height -
+                      MediaQuery.of(context).padding.top -
+                      safeBottomPadding,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 40),
+                    _buildLogo()
+                        .animate()
+                        .scale(duration: 500.ms, curve: Curves.elasticOut)
+                        .fadeIn(),
+                    const SizedBox(height: 24),
+                    Text(
+                      'SMART SE2026',
+                      style:
+                      Theme.of(context).textTheme.displaySmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                        .animate(delay: 200.ms)
+                        .fadeIn()
+                        .slideY(begin: 0.3),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Agentic AI for Analysis',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: isDark
+                            ? AppColors.darkTextSecondary
+                            : AppColors.lightTextSecondary,
+                      ),
+                    )
+                        .animate(delay: 300.ms)
+                        .fadeIn()
+                        .slideY(begin: 0.3),
+                    const SizedBox(height: 48),
+                    GlassCard(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildGoogleButton()
+                                  .animate(delay: 400.ms)
+                                  .fadeIn()
+                                  .slideY(begin: 0.3),
+                              const SizedBox(height: 24),
+                              _buildDivider(isDark)
+                                  .animate(delay: 500.ms)
+                                  .fadeIn(),
+                              const SizedBox(height: 24),
+                              CustomTextField(
+                                controller: _emailController,
+                                label: 'Email',
+                                hint: 'your@email.com',
+                                keyboardType: TextInputType.emailAddress,
+                                prefixIcon: Icons.email_outlined,
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Please enter your email';
+                                  }
+                                  if (!value.contains('@')) {
+                                    return 'Please enter a valid email';
+                                  }
+                                  return null;
                                 },
-                              ),
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Please enter your password';
-                                }
-                                return null;
-                              },
-                            )
-                                .animate(delay: 700.ms)
-                                .fadeIn()
-                                .slideX(begin: -0.1),
-                            const SizedBox(height: 24),
-                            GradientButton(
-                              onPressed: _isLoading ? null : _handleLogin,
-                              isLoading: _isLoading,
-                              child: const Text(
-                                'Sign In',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
+                              )
+                                  .animate(delay: 600.ms)
+                                  .fadeIn()
+                                  .slideX(begin: -0.1),
+                              const SizedBox(height: 16),
+                              CustomTextField(
+                                controller: _passwordController,
+                                label: 'Password',
+                                hint: '••••••••',
+                                obscureText: _obscurePassword,
+                                prefixIcon: Icons.lock_outline,
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                    color: isDark
+                                        ? AppColors.darkTextTertiary
+                                        : AppColors.lightTextTertiary,
+                                  ),
+                                  onPressed: () {
+                                    setState(() =>
+                                    _obscurePassword = !_obscurePassword);
+                                  },
                                 ),
-                              ),
-                            )
-                                .animate(delay: 800.ms)
-                                .fadeIn()
-                                .slideY(begin: 0.3),
-                          ],
-                        ),
-                      ),
-                    ),
-                  )
-                      .animate(delay: 400.ms)
-                      .fadeIn()
-                      .slideY(begin: 0.2),
-                  const SizedBox(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Don't have an account? ",
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: isDark
-                              ? AppColors.darkTextSecondary
-                              : AppColors.lightTextSecondary,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => Navigator.pushNamed(context, '/register'),
-                        child: ShaderMask(
-                          shaderCallback: (bounds) =>
-                              AppColors.primaryGradient.createShader(bounds),
-                          child: Text(
-                            'Sign Up',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Please enter your password';
+                                  }
+                                  return null;
+                                },
+                              )
+                                  .animate(delay: 700.ms)
+                                  .fadeIn()
+                                  .slideX(begin: -0.1),
+                              const SizedBox(height: 24),
+                              GradientButton(
+                                onPressed: _isLoading ? null : _handleLogin,
+                                isLoading: _isLoading,
+                                child: const Text(
+                                  'Sign In',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              )
+                                  .animate(delay: 800.ms)
+                                  .fadeIn()
+                                  .slideY(begin: 0.3),
+                            ],
                           ),
                         ),
                       ),
-                    ],
-                  )
-                      .animate(delay: 900.ms)
-                      .fadeIn(),
-                  const SizedBox(height: 20),
-                ],
+                    )
+                        .animate(delay: 400.ms)
+                        .fadeIn()
+                        .slideY(begin: 0.2),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Don't have an account? ",
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(
+                            color: isDark
+                                ? AppColors.darkTextSecondary
+                                : AppColors.lightTextSecondary,
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/register'),
+                          child: ShaderMask(
+                            shaderCallback: (bounds) =>
+                                AppColors.primaryGradient.createShader(bounds),
+                            child: Text(
+                              'Sign Up',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ).animate(delay: 900.ms).fadeIn(),
+                    const SizedBox(height: 20),
+                  ],
+                ),
               ),
             ),
           ),
@@ -385,7 +403,8 @@ class _LoginScreenState extends State<LoginScreen> {
               height: 24,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation(AppColors.primaryOrange),
+                valueColor:
+                AlwaysStoppedAnimation(AppColors.primaryOrange),
               ),
             ),
           )

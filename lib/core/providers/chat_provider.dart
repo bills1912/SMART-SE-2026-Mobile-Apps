@@ -3,13 +3,15 @@ import '../models/chat_models.dart';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
 import 'auth_provider.dart';
+import '../services/spatial_analysis_service.dart';
+import '../models/spatial_analysis_models.dart';
 import 'dart:convert';
 
-/// ChatProvider - manages chat sessions and messages
-/// Matches backend server.py chat endpoints
+/// ChatProvider — manages chat sessions, messages, and spatial analysis.
 class ChatProvider extends ChangeNotifier {
   final ApiService _apiService;
   final AuthProvider _authProvider;
+  final SpatialAnalysisService _spatialService = SpatialAnalysisService();
 
   ChatSession? _currentSession;
   List<ChatSession> _sessions = [];
@@ -19,9 +21,10 @@ class ChatProvider extends ChangeNotifier {
   HealthStatus? _healthStatus;
   bool _initialized = false;
 
-  // Constructor
+  // Spatial analysis results keyed by message ID
+  final Map<String, SpatialAnalysisResult> _spatialResults = {};
+
   ChatProvider(this._apiService, this._authProvider) {
-    // Listen to auth changes - THIS IS THE KEY FIX
     _authProvider.addListener(_onAuthChanged);
     _init();
   }
@@ -32,161 +35,117 @@ class ChatProvider extends ChangeNotifier {
     super.dispose();
   }
 
-  /// Called when auth state changes (login/logout)
   void _onAuthChanged() {
-    print('[ChatProvider] Auth state changed: isAuthenticated=${_authProvider.isAuthenticated}');
+    print('[ChatProvider] Auth changed: ${_authProvider.isAuthenticated}');
     if (_authProvider.isAuthenticated) {
-      // User just logged in - reload sessions
-      print('[ChatProvider] User logged in, reloading sessions...');
       loadSessions();
     } else {
-      // User logged out - clear sessions
-      print('[ChatProvider] User logged out, clearing sessions...');
       _sessions = [];
       _currentSession = null;
+      _spatialResults.clear();
       notifyListeners();
     }
   }
 
-  // Getters
+  // ─── Getters ──────────────────────────────────────────────────────────────
   ChatSession? get currentSession => _currentSession;
   List<ChatSession> get sessions => _sessions;
   bool get isLoading => _isLoading;
   bool get isSending => _isSending;
   String? get error => _error;
   HealthStatus? get healthStatus => _healthStatus;
-
   bool get isBackendAvailable => _healthStatus?.isHealthy ?? false;
   String get scrapingStatus => _healthStatus?.scrapingStatus ?? 'idle';
+  Map<String, SpatialAnalysisResult> get spatialResults => _spatialResults;
 
-  /// Initialize chat state
+  SpatialAnalysisResult? getSpatialResult(String messageId) =>
+      _spatialResults[messageId];
+
+  // ─── Init ─────────────────────────────────────────────────────────────────
   Future<void> _init() async {
     if (_initialized) return;
     _initialized = true;
-
     await checkBackendStatus();
-
-    // Only load sessions if already authenticated
-    if (_authProvider.isAuthenticated) {
-      await loadSessions();
-    }
+    if (_authProvider.isAuthenticated) await loadSessions();
   }
 
-  /// Force refresh sessions - call this after login
   Future<void> refreshAfterLogin() async {
-    print('[ChatProvider] Refreshing after login...');
     await checkBackendStatus();
     await loadSessions();
   }
 
-  /// Check backend health status
-  /// Backend: GET /api/health
   Future<void> checkBackendStatus() async {
     try {
       final health = await _apiService.getHealth();
       _healthStatus = HealthStatus.fromJson(health);
-      print('[ChatProvider] Backend status: ${_healthStatus?.status}');
     } catch (e) {
-      print('[ChatProvider] Health check error: $e');
       _healthStatus = null;
     }
     notifyListeners();
   }
 
-  /// Load user's chat sessions
-  /// Backend: GET /api/sessions
   Future<void> loadSessions() async {
-    // Only load if authenticated
     if (!_authProvider.isAuthenticated) {
-      print('[ChatProvider] Not authenticated, skipping loadSessions');
       _sessions = [];
       notifyListeners();
       return;
     }
-
     _isLoading = true;
     notifyListeners();
-
     try {
-      print('[ChatProvider] Loading sessions for user: ${_authProvider.user?.email}');
       _sessions = await _apiService.getSessions();
-      // Sort by updated_at descending (newest first)
       _sessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       _error = null;
-      print('[ChatProvider] Loaded ${_sessions.length} sessions');
     } catch (e) {
-      print('[ChatProvider] Load sessions error: $e');
       _error = 'Gagal memuat sesi chat';
     }
-
     _isLoading = false;
     notifyListeners();
   }
 
-  /// Create new chat session (local only until first message)
   void createNewChat() {
     _currentSession = ChatSession(
-      id: '', // Will be assigned by backend
+      id: '',
       userId: _authProvider.user?.userId,
       title: 'Analisis Sensus Baru',
       messages: [],
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
-    print('[ChatProvider] Created new local chat session');
     notifyListeners();
   }
 
-  /// Switch to existing session
-  /// Backend: GET /api/sessions/{session_id}
   Future<void> switchToSession(String sessionId) async {
     if (_currentSession?.id == sessionId) return;
-
     _isLoading = true;
     notifyListeners();
-
     try {
-      // Try to find in local cache first
-      final cachedSession = _sessions.firstWhere(
+      final cached = _sessions.firstWhere(
             (s) => s.id == sessionId,
         orElse: () => ChatSession(
-          id: sessionId,
-          title: '',
-          messages: [],
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        ),
+            id: sessionId,
+            title: '',
+            messages: [],
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now()),
       );
-
-      // Show cached data immediately
-      if (cachedSession.messages.isNotEmpty) {
-        _currentSession = cachedSession;
+      if (cached.messages.isNotEmpty) {
+        _currentSession = cached;
         notifyListeners();
       }
-
-      // Fetch fresh data from backend
       final session = await _apiService.getSession(sessionId);
       _currentSession = session;
-
-      // Update cache
-      final index = _sessions.indexWhere((s) => s.id == sessionId);
-      if (index >= 0) {
-        _sessions[index] = session;
-      }
-
+      final idx = _sessions.indexWhere((s) => s.id == sessionId);
+      if (idx >= 0) _sessions[idx] = session;
       _error = null;
-      print('[ChatProvider] Switched to session $sessionId with ${session.messages.length} messages');
     } catch (e) {
-      print('[ChatProvider] Switch session error: $e');
       _error = 'Gagal memuat sesi';
     }
-
     _isLoading = false;
     notifyListeners();
   }
 
-  /// Send message to AI
-  /// Backend: POST /api/chat
+  // ─── Send Message ────────────────────────────────────────────────────────
   Future<ChatResponse?> sendMessage(String message) async {
     if (message.trim().isEmpty || _isSending) return null;
 
@@ -194,7 +153,6 @@ class ChatProvider extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
-    // Create user message locally
     final userMessage = ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       sessionId: _currentSession?.id ?? '',
@@ -203,14 +161,12 @@ class ChatProvider extends ChangeNotifier {
       timestamp: DateTime.now(),
     );
 
-    // Add to current session
     if (_currentSession != null) {
       _currentSession = _currentSession!.copyWith(
         messages: [..._currentSession!.messages, userMessage],
         updatedAt: DateTime.now(),
       );
     } else {
-      // Create new session
       _currentSession = ChatSession(
         id: '',
         userId: _authProvider.user?.userId,
@@ -223,23 +179,39 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Check backend availability
       if (!isBackendAvailable) {
         await checkBackendStatus();
-        if (!isBackendAvailable) {
-          throw Exception('Server sedang tidak tersedia');
+        if (!isBackendAvailable) throw Exception('Server sedang tidak tersedia');
+      }
+
+      final response = await _apiService.sendMessage(
+        message,
+        sessionId:
+        _currentSession!.id.isNotEmpty ? _currentSession!.id : null,
+      );
+
+      // ── Spatial Analysis ──────────────────────────────────────────────
+      // Check if this message warrants spatial/map analysis
+      final messageId =
+          '${response.sessionId}_${DateTime.now().millisecondsSinceEpoch}';
+      bool hasSpatial = false;
+
+      if (SpatialAnalysisService.isSpatialQuery(message)) {
+        final spatialResult = await _buildSpatialFromResponse(
+          message: message,
+          response: response,
+        );
+        if (spatialResult != null && spatialResult.hasLocations) {
+          _spatialResults[messageId] = spatialResult;
+          hasSpatial = true;
+          print('[ChatProvider] Spatial analysis built: '
+              '${spatialResult.locations.length} locations, '
+              '${spatialResult.economicCenters.length} centers');
         }
       }
 
-      // Send to backend
-      final response = await _apiService.sendMessage(
-        message,
-        sessionId: _currentSession!.id.isNotEmpty ? _currentSession!.id : null,
-      );
-
-      // Create AI response message
       final aiMessage = ChatMessage(
-        id: '${response.sessionId}_${DateTime.now().millisecondsSinceEpoch}',
+        id: messageId,
         sessionId: response.sessionId,
         sender: 'ai',
         content: response.message,
@@ -249,34 +221,24 @@ class ChatProvider extends ChangeNotifier {
         policies: response.policies,
       );
 
-      // Update current session with backend session ID
       _currentSession = _currentSession!.copyWith(
         id: response.sessionId,
-        title: _currentSession!.title.isEmpty || _currentSession!.title == 'Analisis Sensus Baru'
+        title: _currentSession!.title.isEmpty ||
+            _currentSession!.title == 'Analisis Sensus Baru'
             ? _generateTitle(message)
             : _currentSession!.title,
         messages: [..._currentSession!.messages, aiMessage],
         updatedAt: DateTime.now(),
       );
 
-      // Update sessions list
       _updateSessionsList();
-
-      // Refresh health status
       await checkBackendStatus();
-
-      print('[ChatProvider] Message sent, session: ${response.sessionId}');
-      print('[ChatProvider] Response has ${response.visualizations?.length ?? 0} visualizations');
-      print('[ChatProvider] Response has ${response.insights?.length ?? 0} insights');
-      print('[ChatProvider] Response has ${response.policies?.length ?? 0} policies');
 
       _isSending = false;
       notifyListeners();
       return response;
     } catch (e) {
-      print('[ChatProvider] Send message error: $e');
-
-      // Add error message
+      print('[ChatProvider] sendMessage error: $e');
       final errorMessage = ChatMessage(
         id: 'error_${DateTime.now().millisecondsSinceEpoch}',
         sessionId: _currentSession?.id ?? '',
@@ -284,11 +246,9 @@ class ChatProvider extends ChangeNotifier {
         content: 'Maaf, terjadi kesalahan: ${_parseError(e)}. Silakan coba lagi.',
         timestamp: DateTime.now(),
       );
-
       _currentSession = _currentSession!.copyWith(
         messages: [..._currentSession!.messages, errorMessage],
       );
-
       _error = _parseError(e);
       _isSending = false;
       notifyListeners();
@@ -296,159 +256,201 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Update sessions list with current session
+  // ─── Build spatial analysis from API response ─────────────────────────────
+  Future<SpatialAnalysisResult?> _buildSpatialFromResponse({
+    required String message,
+    required ChatResponse response,
+  }) async {
+    try {
+      // Extract analysis data from the first visualization's data field
+      // or from insights to rebuild province data
+      Map<String, dynamic> analysisData = {};
+
+      if (response.visualizations != null &&
+          response.visualizations!.isNotEmpty) {
+        // Try to pull province/sector data from visualization config
+        for (final viz in response.visualizations!) {
+          final cfg = viz.config;
+          // Extract from xAxis categories + series data
+          final xAxis = cfg['xAxis'];
+          final series = cfg['series'];
+          if (xAxis is Map && series is List && series.isNotEmpty) {
+            final categories =
+                (xAxis['data'] as List?)?.cast<String>() ?? <String>[];
+            final seriesData = series[0]['data'];
+            if (categories.isNotEmpty && seriesData is List) {
+              // Build top_provinces list
+              final topProvinces = <Map<String, dynamic>>[];
+              for (int i = 0; i < categories.length; i++) {
+                topProvinces.add({
+                  'provinsi': categories[i],
+                  'total': seriesData.length > i
+                      ? (seriesData[i] is num
+                      ? (seriesData[i] as num).toInt()
+                      : 0)
+                      : 0,
+                  'percentage': 0,
+                });
+              }
+              analysisData['top_provinces'] = topProvinces;
+              break;
+            }
+
+            // Pie chart format
+            final pieData = series[0]['data'];
+            if (pieData is List && pieData.isNotEmpty && pieData[0] is Map) {
+              final topProvinces = <Map<String, dynamic>>[];
+              for (final item in pieData) {
+                if (item is Map) {
+                  topProvinces.add({
+                    'provinsi': item['name']?.toString() ?? '',
+                    'total': (item['value'] is num)
+                        ? (item['value'] as num).toInt()
+                        : 0,
+                  });
+                }
+              }
+              analysisData['top_provinces'] = topProvinces;
+              break;
+            }
+          }
+        }
+      }
+
+      // If no viz data, build from all known provinces with zero values
+      // so the map still renders with Indonesia's geography
+      if (analysisData.isEmpty) {
+        analysisData['top_provinces'] = kProvinceCoordinates.keys.map((k) {
+          return {'provinsi': k, 'total': 0};
+        }).toList();
+      }
+
+      return _spatialService.buildSpatialAnalysis(
+        query: message,
+        response: response,
+        analysisData: analysisData,
+      );
+    } catch (e) {
+      print('[ChatProvider] Spatial build error: $e');
+      return null;
+    }
+  }
+
+  // ─── Session management ───────────────────────────────────────────────────
   void _updateSessionsList() {
     if (_currentSession == null) return;
-
-    final index = _sessions.indexWhere((s) => s.id == _currentSession!.id);
-    if (index >= 0) {
-      _sessions[index] = _currentSession!;
+    final idx = _sessions.indexWhere((s) => s.id == _currentSession!.id);
+    if (idx >= 0) {
+      _sessions[idx] = _currentSession!;
     } else if (_currentSession!.id.isNotEmpty) {
       _sessions.insert(0, _currentSession!);
     }
-
-    // Sort by updated_at
     _sessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
-  /// Generate title from message
   String _generateTitle(String message) {
     final words = message.split(' ').take(6).join(' ');
     return words.length > 50 ? '${words.substring(0, 47)}...' : words;
   }
 
-  /// Delete single session
-  /// Backend: DELETE /api/sessions/{session_id}
   Future<bool> deleteSession(String sessionId) async {
     try {
       await _apiService.deleteSession(sessionId);
       _sessions.removeWhere((s) => s.id == sessionId);
-
-      if (_currentSession?.id == sessionId) {
-        createNewChat();
-      }
-
-      print('[ChatProvider] Deleted session $sessionId');
+      if (_currentSession?.id == sessionId) createNewChat();
+      // Clean up spatial results
+      _spatialResults.removeWhere((k, _) => k.startsWith(sessionId));
       notifyListeners();
       return true;
     } catch (e) {
-      print('[ChatProvider] Delete session error: $e');
       _error = 'Gagal menghapus sesi';
       notifyListeners();
       return false;
     }
   }
 
-  /// Delete multiple sessions
-  /// Backend: DELETE /api/sessions/batch
   Future<bool> deleteSessions(List<String> sessionIds) async {
     try {
       await _apiService.deleteSessions(sessionIds);
       _sessions.removeWhere((s) => sessionIds.contains(s.id));
-
-      if (_currentSession != null && sessionIds.contains(_currentSession!.id)) {
+      if (_currentSession != null &&
+          sessionIds.contains(_currentSession!.id)) {
         createNewChat();
       }
-
-      print('[ChatProvider] Deleted ${sessionIds.length} sessions');
       notifyListeners();
       return true;
     } catch (e) {
-      print('[ChatProvider] Delete sessions error: $e');
       _error = 'Gagal menghapus sesi';
       notifyListeners();
       return false;
     }
   }
 
-  /// Delete all sessions
-  /// Backend: DELETE /api/sessions/all
   Future<bool> deleteAllSessions() async {
     try {
       await _apiService.deleteAllSessions();
       _sessions.clear();
+      _spatialResults.clear();
       createNewChat();
-
-      print('[ChatProvider] Deleted all sessions');
       notifyListeners();
       return true;
     } catch (e) {
-      print('[ChatProvider] Delete all sessions error: $e');
       _error = 'Gagal menghapus semua sesi';
       notifyListeners();
       return false;
     }
   }
 
-  /// Export current chat data
   Map<String, dynamic> exportCurrentChat() {
     if (_currentSession == null) return {};
-
     return {
       'title': _currentSession!.title,
       'created': _currentSession!.createdAt.toIso8601String(),
-      'messages': _currentSession!.messages.map((m) {
-        return <String, dynamic>{
-          'sender': m.sender,
-          'content': m.content,
-          'timestamp': m.timestamp.toIso8601String(),
-          'hasVisualizations': m.hasVisualizations,
-          'hasInsights': m.hasInsights,
-          'hasPolicies': m.hasPolicies,
-        };
+      'messages': _currentSession!.messages.map((m) => <String, dynamic>{
+        'sender': m.sender,
+        'content': m.content,
+        'timestamp': m.timestamp.toIso8601String(),
+        'hasSpatial': _spatialResults.containsKey(m.id),
       }).toList(),
     };
   }
 
-  /// Export all chats data
   Map<String, dynamic> exportAllChats() {
     return {
       'exportDate': DateTime.now().toIso8601String(),
       'totalSessions': _sessions.length,
-      'sessions': _sessions.map((s) {
-        return <String, dynamic>{
-          'id': s.id,
-          'title': s.title,
-          'created': s.createdAt.toIso8601String(),
-          'messageCount': s.messages.length,
-        };
+      'sessions': _sessions.map((s) => <String, dynamic>{
+        'id': s.id,
+        'title': s.title,
+        'created': s.createdAt.toIso8601String(),
+        'messageCount': s.messages.length,
       }).toList(),
     };
   }
 
-  /// Get report URL for a session
-  /// Backend: GET /api/report/{session_id}/{format}
   String getReportUrl(String format) {
     if (_currentSession == null || _currentSession!.id.isEmpty) return '';
     return _apiService.getReportUrl(_currentSession!.id, format);
   }
 
-  /// Get report preview URL
-  /// Backend: GET /api/report/{session_id}/preview
   String getReportPreviewUrl() {
     if (_currentSession == null || _currentSession!.id.isEmpty) return '';
     return _apiService.getReportPreviewUrl(_currentSession!.id);
   }
 
-  /// Total messages across all sessions
-  int get totalMessages {
-    return _sessions.fold(0, (sum, s) => sum + s.realMessageCount);
-  }
+  int get totalMessages =>
+      _sessions.fold(0, (sum, s) => sum + s.realMessageCount);
 
-  /// Total insights across all sessions
   int get totalInsights {
     int count = 0;
     for (final session in _sessions) {
       for (final message in session.messages) {
-        if (message.insights != null) {
-          count += message.insights!.length;
-        }
+        if (message.insights != null) count += message.insights!.length;
       }
     }
     return count;
   }
 
-  /// Total visualizations across all sessions
   int get totalVisualizations {
     int count = 0;
     for (final session in _sessions) {
@@ -461,34 +463,29 @@ class ChatProvider extends ChangeNotifier {
     return count;
   }
 
-  /// Clear error
   void clearError() {
     _error = null;
     notifyListeners();
   }
 
-  /// Clear current session
   void clearCurrentSession() {
     _currentSession = null;
     notifyListeners();
   }
 
-  /// Parse error message
   String _parseError(dynamic error) {
-    final errorStr = error.toString().toLowerCase();
-
-    if (errorStr.contains('401') || errorStr.contains('403')) {
+    final s = error.toString().toLowerCase();
+    if (s.contains('401') || s.contains('403')) {
       return 'Sesi telah berakhir, silakan login kembali';
-    } else if (errorStr.contains('404')) {
-      return 'Sesi tidak ditemukan';
-    } else if (errorStr.contains('500') || errorStr.contains('503')) {
-      return 'Server sedang mengalami masalah';
-    } else if (errorStr.contains('network') || errorStr.contains('connection')) {
-      return 'Tidak dapat terhubung ke server';
-    } else if (errorStr.contains('timeout')) {
-      return 'Koneksi timeout, coba lagi';
     }
-
+    if (s.contains('404')) return 'Sesi tidak ditemukan';
+    if (s.contains('500') || s.contains('503')) {
+      return 'Server sedang mengalami masalah';
+    }
+    if (s.contains('network') || s.contains('connection')) {
+      return 'Tidak dapat terhubung ke server';
+    }
+    if (s.contains('timeout')) return 'Koneksi timeout, coba lagi';
     return 'Terjadi kesalahan, silakan coba lagi';
   }
 }

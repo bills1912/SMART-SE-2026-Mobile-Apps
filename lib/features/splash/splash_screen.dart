@@ -19,35 +19,57 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _navigateAfterDelay() async {
+    // Wait for splash animation
     await Future.delayed(const Duration(milliseconds: 2500));
-    
+
     if (!mounted) return;
-    
+
     final authProvider = context.read<AuthProvider>();
-    
+
+    // FIX: Wait for auth to finish initializing if it's still loading
+    if (authProvider.isLoading) {
+      // Poll until auth is done (max 5 seconds)
+      for (int i = 0; i < 50 && authProvider.isLoading; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (!mounted) return;
+      }
+    }
+
+    if (!mounted) return;
+
+    // FIX: Use pushNamedAndRemoveUntil to clear the entire stack.
+    // This ensures pressing back from dashboard or login never returns to splash.
     if (authProvider.isAuthenticated) {
-      Navigator.pushReplacementNamed(context, '/dashboard');
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/dashboard',
+            (route) => false,
+      );
     } else {
-      Navigator.pushReplacementNamed(context, '/login');
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/login',
+            (route) => false,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
-          gradient: isDark 
-              ? AppColors.darkBackgroundGradient 
+          gradient: isDark
+              ? AppColors.darkBackgroundGradient
               : AppColors.lightBackgroundGradient,
         ),
         child: Stack(
           children: [
             // Animated background circles
             ..._buildBackgroundCircles(isDark),
-            
+
             // Main content
             Center(
               child: Column(
@@ -76,22 +98,23 @@ class _SplashScreenState extends State<SplashScreen> {
                   )
                       .animate()
                       .scale(
-                        begin: const Offset(0.5, 0.5),
-                        end: const Offset(1, 1),
-                        duration: 600.ms,
-                        curve: Curves.elasticOut,
-                      )
+                    begin: const Offset(0.5, 0.5),
+                    end: const Offset(1, 1),
+                    duration: 600.ms,
+                    curve: Curves.elasticOut,
+                  )
                       .fadeIn(duration: 400.ms),
-                  
+
                   const SizedBox(height: 32),
-                  
+
                   // Title
                   ShaderMask(
-                    shaderCallback: (bounds) => AppColors.primaryGradient
-                        .createShader(bounds),
+                    shaderCallback: (bounds) =>
+                        AppColors.primaryGradient.createShader(bounds),
                     child: Text(
                       'SMART SE2026',
-                      style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                      style:
+                      Theme.of(context).textTheme.displayMedium?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 2,
@@ -101,15 +124,15 @@ class _SplashScreenState extends State<SplashScreen> {
                       .animate(delay: 300.ms)
                       .fadeIn(duration: 500.ms)
                       .slideY(begin: 0.3, end: 0),
-                  
+
                   const SizedBox(height: 8),
-                  
+
                   // Subtitle
                   Text(
                     'Agentic AI for Analysis',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: isDark 
-                          ? AppColors.darkTextSecondary 
+                      color: isDark
+                          ? AppColors.darkTextSecondary
                           : AppColors.lightTextSecondary,
                       letterSpacing: 1,
                     ),
@@ -117,9 +140,9 @@ class _SplashScreenState extends State<SplashScreen> {
                       .animate(delay: 500.ms)
                       .fadeIn(duration: 500.ms)
                       .slideY(begin: 0.3, end: 0),
-                  
+
                   const SizedBox(height: 60),
-                  
+
                   // Loading indicator
                   SizedBox(
                     width: 40,
@@ -137,7 +160,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 ],
               ),
             ),
-            
+
             // Bottom text
             Positioned(
               bottom: 50,
@@ -147,13 +170,11 @@ class _SplashScreenState extends State<SplashScreen> {
                 'Sensus Ekonomi Indonesia 2026',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: isDark 
-                      ? AppColors.darkTextTertiary 
+                  color: isDark
+                      ? AppColors.darkTextTertiary
                       : AppColors.lightTextTertiary,
                 ),
-              )
-                  .animate(delay: 1000.ms)
-                  .fadeIn(duration: 500.ms),
+              ).animate(delay: 1000.ms).fadeIn(duration: 500.ms),
             ),
           ],
         ),
@@ -181,16 +202,16 @@ class _SplashScreenState extends State<SplashScreen> {
         )
             .animate(onPlay: (c) => c.repeat())
             .scale(
-              begin: const Offset(0.8, 0.8),
-              end: const Offset(1.2, 1.2),
-              duration: 3.seconds,
-            )
+          begin: const Offset(0.8, 0.8),
+          end: const Offset(1.2, 1.2),
+          duration: 3.seconds,
+        )
             .then()
             .scale(
-              begin: const Offset(1.2, 1.2),
-              end: const Offset(0.8, 0.8),
-              duration: 3.seconds,
-            ),
+          begin: const Offset(1.2, 1.2),
+          end: const Offset(0.8, 0.8),
+          duration: 3.seconds,
+        ),
       ),
       Positioned(
         bottom: -150,
@@ -210,16 +231,16 @@ class _SplashScreenState extends State<SplashScreen> {
         )
             .animate(onPlay: (c) => c.repeat())
             .scale(
-              begin: const Offset(1, 1),
-              end: const Offset(1.3, 1.3),
-              duration: 4.seconds,
-            )
+          begin: const Offset(1, 1),
+          end: const Offset(1.3, 1.3),
+          duration: 4.seconds,
+        )
             .then()
             .scale(
-              begin: const Offset(1.3, 1.3),
-              end: const Offset(1, 1),
-              duration: 4.seconds,
-            ),
+          begin: const Offset(1.3, 1.3),
+          end: const Offset(1, 1),
+          duration: 4.seconds,
+        ),
       ),
     ];
   }
