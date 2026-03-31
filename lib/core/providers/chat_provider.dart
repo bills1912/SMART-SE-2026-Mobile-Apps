@@ -21,11 +21,26 @@ class ChatProvider extends ChangeNotifier {
   HealthStatus? _healthStatus;
   bool _initialized = false;
 
-  // Spatial analysis results keyed by stable message ID
+  // Spatial analysis results keyed by MESSAGE ID (local frontend ID).
+  // Repopulated from persistent storage on every session load.
   final Map<String, SpatialAnalysisResult> _spatialResults = {};
 
-  // Storage key prefix for persisted spatial results
-  static const String _spatialStoragePrefix = 'spatial_result_';
+  // ─────────────────────────────────────────────────────────────────────────
+  // PERSISTENCE STRATEGY
+  //
+  // The backend assigns its own IDs to messages, so after reload the message
+  // IDs differ from the local IDs used as keys in _spatialResults.
+  //
+  // Solution: persist the USER QUERY keyed by
+  //   "sq__{sessionId}__{aiMsgIndex}"
+  // where aiMsgIndex is the 0-based position of the AI message among all AI
+  // messages in the session.  Position is stable across reloads.
+  //
+  // On restore: for each AI message at index i, look up the stored query,
+  // regenerate the SpatialAnalysisResult from SpatialMockData, and map it
+  // to the *backend* message ID so getSpatialResult(msg.id) works.
+  // ─────────────────────────────────────────────────────────────────────────
+  static const String _sqPrefix = 'sq__';
 
   ChatProvider(this._apiService, this._authProvider) {
     _authProvider.addListener(_onAuthChanged);
@@ -134,14 +149,15 @@ class ChatProvider extends ChangeNotifier {
       );
       if (cached.messages.isNotEmpty) {
         _currentSession = cached;
-        // Restore spatial results for already-loaded messages
-        await _restoreSpatialResultsForSession(cached);
+        _rebuildSpatialResultsForSession(cached);
         notifyListeners();
       }
+
       final session = await _apiService.getSession(sessionId);
       _currentSession = session;
-      // Restore spatial results for the fully loaded session
-      await _restoreSpatialResultsForSession(session);
+      // Rebuild with the fully-loaded session (real backend message IDs)
+      _rebuildSpatialResultsForSession(session);
+
       final idx = _sessions.indexWhere((s) => s.id == sessionId);
       if (idx >= 0) _sessions[idx] = session;
       _error = null;
@@ -152,75 +168,69 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Persist spatial result for a message ─────────────────────────────────
-  /// Saves spatial result keyed by stable messageId to SharedPreferences.
-  Future<void> _persistSpatialResult(
-      String messageId, SpatialAnalysisResult result) async {
-    try {
-      // Serialise only the lightweight data needed to rebuild the result.
-      // We store province totals and bounding-box; the rest is regenerated
-      // via SpatialMockData so we don't need to serialise the full model.
-      final Map<String, dynamic> payload = {
-        'query': result.query,
-        'analysisType': result.analysisType,
-        'generatedAt': result.generatedAt.toIso8601String(),
-        'topProvinces': result.statistics.usahaByProvince.entries
-            .take(34)
-            .map((e) => {'provinsi': e.key, 'total': e.value})
-            .toList(),
-      };
-      await StorageService.setString(
-          '$_spatialStoragePrefix$messageId', jsonEncode(payload));
-    } catch (e) {
-      print('[ChatProvider] Failed to persist spatial result: $e');
-    }
+  // ─── Persistence helpers ──────────────────────────────────────────────────
+
+  String _storageKey(String sessionId, int aiMsgIndex) =>
+      '$_sqPrefix${sessionId}__$aiMsgIndex';
+
+  /// Saves the user query string at position [aiMsgIndex] (0-based, AI only).
+  Future<void> _persistSpatialQuery(
+      String sessionId, int aiMsgIndex, String userQuery) async {
+    final key = _storageKey(sessionId, aiMsgIndex);
+    await StorageService.setString(key, userQuery);
+    print('[ChatProvider] Persisted spatial key=$key query="$userQuery"');
   }
 
-  /// Restores spatial results for all AI messages in a session from storage.
-  Future<void> _restoreSpatialResultsForSession(ChatSession session) async {
-    for (final msg in session.messages) {
-      if (!msg.isAI) continue;
-      // Already loaded
-      if (_spatialResults.containsKey(msg.id)) continue;
+  /// Rebuilds _spatialResults for all AI messages in [session] that have a
+  /// stored query.  Maps result to the message's actual ID (backend ID).
+  void _rebuildSpatialResultsForSession(ChatSession session) {
+    if (session.id.isEmpty) return;
+
+    // Collect AI messages in order
+    final aiMessages =
+    session.messages.where((m) => m.isAI).toList();
+
+    for (int i = 0; i < aiMessages.length; i++) {
+      final msg = aiMessages[i];
+      if (_spatialResults.containsKey(msg.id)) continue; // already loaded
+
+      final storedQuery =
+      StorageService.getString(_storageKey(session.id, i));
+      if (storedQuery == null || storedQuery.isEmpty) continue;
 
       try {
-        final raw = StorageService.getString('$_spatialStoragePrefix${msg.id}');
-        if (raw == null) continue;
-        final payload = jsonDecode(raw) as Map<String, dynamic>;
-
-        // Re-build from stored query using mock data engine
-        final query = payload['query'] as String? ?? '';
-        if (query.isEmpty) continue;
-
-        // Build a lightweight analysisData from stored province totals
-        final topProvinces = (payload['topProvinces'] as List?)
-            ?.map((e) => Map<String, dynamic>.from(e as Map))
-            .toList() ??
-            [];
-
-        final analysisData = {'top_provinces': topProvinces};
-
-        // We need a minimal ChatResponse-like object – use a dummy
-        // response so the spatial service can reconstruct from mock.
-        final dummyResponse = _DummyChatResponse();
-
         final result = _spatialService.buildSpatialAnalysis(
-          query: query,
-          response: dummyResponse,
-          analysisData: analysisData,
+          query: storedQuery,
+          response: _DummyChatResponse(),
+          analysisData: {
+            'top_provinces': kProvinceCoordinates.keys
+                .map((k) => {'provinsi': k, 'total': 0})
+                .toList()
+          },
         );
 
         if (result.hasLocations) {
           _spatialResults[msg.id] = result;
-          print('[ChatProvider] Restored spatial result for msg ${msg.id}');
+          print('[ChatProvider] Restored spatial msgId=${msg.id} '
+              'aiIdx=$i query="$storedQuery"');
         }
       } catch (e) {
-        print('[ChatProvider] Failed to restore spatial result for ${msg.id}: $e');
+        print('[ChatProvider] Restore failed msgId=${msg.id}: $e');
       }
     }
   }
 
-  // ─── Send Message ────────────────────────────────────────────────────────
+  /// Removes all stored spatial queries for a given session (up to 200 entries).
+  Future<void> _clearPersistedSpatialForSession(String sessionId) async {
+    for (int i = 0; i < 200; i++) {
+      final key = _storageKey(sessionId, i);
+      final val = StorageService.getString(key);
+      if (val == null) break;
+      await StorageService.remove(key);
+    }
+  }
+
+  // ─── Send Message ─────────────────────────────────────────────────────────
   Future<ChatResponse?> sendMessage(String message) async {
     if (message.trim().isEmpty || _isSending) return null;
 
@@ -256,7 +266,8 @@ class ChatProvider extends ChangeNotifier {
     try {
       if (!isBackendAvailable) {
         await checkBackendStatus();
-        if (!isBackendAvailable) throw Exception('Server sedang tidak tersedia');
+        if (!isBackendAvailable)
+          throw Exception('Server sedang tidak tersedia');
       }
 
       final response = await _apiService.sendMessage(
@@ -265,13 +276,12 @@ class ChatProvider extends ChangeNotifier {
         _currentSession!.id.isNotEmpty ? _currentSession!.id : null,
       );
 
-      // ── Build AI message first so we have the stable ID ──────────────────
-      // FIX: Use response.sessionId + response message hash as stable key
-      // so it survives app restarts (unlike a timestamp).
-      final stableId = '${response.sessionId}_${message.trim().hashCode.abs()}';
+      // Use a local id for immediate display (before backend assigns its own)
+      final localAiId =
+          '${response.sessionId}_ai_${DateTime.now().millisecondsSinceEpoch}';
 
       final aiMessage = ChatMessage(
-        id: stableId,
+        id: localAiId,
         sessionId: response.sessionId,
         sender: 'ai',
         content: response.message,
@@ -281,22 +291,7 @@ class ChatProvider extends ChangeNotifier {
         policies: response.policies,
       );
 
-      // ── Spatial Analysis ──────────────────────────────────────────────────
-      if (SpatialAnalysisService.isSpatialQuery(message)) {
-        final spatialResult = await _buildSpatialFromResponse(
-          message: message,
-          response: response,
-        );
-        if (spatialResult != null && spatialResult.hasLocations) {
-          // Store with stable message ID
-          _spatialResults[stableId] = spatialResult;
-          // Persist so it survives reload
-          await _persistSpatialResult(stableId, spatialResult);
-          print('[ChatProvider] Spatial analysis saved for msg $stableId: '
-              '${spatialResult.locations.length} locations');
-        }
-      }
-
+      // Commit updated session (needed to count AI message position below)
       _currentSession = _currentSession!.copyWith(
         id: response.sessionId,
         title: _currentSession!.title.isEmpty ||
@@ -306,6 +301,33 @@ class ChatProvider extends ChangeNotifier {
         messages: [..._currentSession!.messages, aiMessage],
         updatedAt: DateTime.now(),
       );
+
+      // ── Spatial Analysis ──────────────────────────────────────────────────
+      if (SpatialAnalysisService.isSpatialQuery(message)) {
+        final spatialResult = await _buildSpatialFromResponse(
+          message: message,
+          response: response,
+        );
+
+        if (spatialResult != null && spatialResult.hasLocations) {
+          // Map to local AI id for immediate display
+          _spatialResults[localAiId] = spatialResult;
+
+          // Determine 0-based position among AI messages for persistence
+          final aiMsgIndex = _currentSession!.messages
+              .where((m) => m.isAI)
+              .toList()
+              .indexWhere((m) => m.id == localAiId);
+
+          if (aiMsgIndex >= 0) {
+            await _persistSpatialQuery(
+                response.sessionId, aiMsgIndex, message.trim());
+          }
+
+          print('[ChatProvider] Spatial stored localId=$localAiId '
+              'aiIdx=$aiMsgIndex locations=${spatialResult.locations.length}');
+        }
+      }
 
       _updateSessionsList();
       await checkBackendStatus();
@@ -319,7 +341,8 @@ class ChatProvider extends ChangeNotifier {
         id: 'error_${DateTime.now().millisecondsSinceEpoch}',
         sessionId: _currentSession?.id ?? '',
         sender: 'ai',
-        content: 'Maaf, terjadi kesalahan: ${_parseError(e)}. Silakan coba lagi.',
+        content:
+        'Maaf, terjadi kesalahan: ${_parseError(e)}. Silakan coba lagi.',
         timestamp: DateTime.now(),
       );
       _currentSession = _currentSession!.copyWith(
@@ -366,9 +389,10 @@ class ChatProvider extends ChangeNotifier {
               analysisData['top_provinces'] = topProvinces;
               break;
             }
-
             final pieData = series[0]['data'];
-            if (pieData is List && pieData.isNotEmpty && pieData[0] is Map) {
+            if (pieData is List &&
+                pieData.isNotEmpty &&
+                pieData[0] is Map) {
               final topProvinces = <Map<String, dynamic>>[];
               for (final item in pieData) {
                 if (item is Map) {
@@ -388,9 +412,9 @@ class ChatProvider extends ChangeNotifier {
       }
 
       if (analysisData.isEmpty) {
-        analysisData['top_provinces'] = kProvinceCoordinates.keys.map((k) {
-          return {'provinsi': k, 'total': 0};
-        }).toList();
+        analysisData['top_provinces'] = kProvinceCoordinates.keys
+            .map((k) => {'provinsi': k, 'total': 0})
+            .toList();
       }
 
       return _spatialService.buildSpatialAnalysis(
@@ -426,14 +450,9 @@ class ChatProvider extends ChangeNotifier {
       await _apiService.deleteSession(sessionId);
       _sessions.removeWhere((s) => s.id == sessionId);
       if (_currentSession?.id == sessionId) createNewChat();
-      // Clean up spatial results and persisted storage for this session
-      final keysToRemove = _spatialResults.keys
-          .where((k) => k.startsWith(sessionId))
-          .toList();
-      for (final k in keysToRemove) {
-        _spatialResults.remove(k);
-        await StorageService.remove('$_spatialStoragePrefix$k');
-      }
+      await _clearPersistedSpatialForSession(sessionId);
+      _spatialResults
+          .removeWhere((k, _) => k.startsWith('${sessionId}_ai_'));
       notifyListeners();
       return true;
     } catch (e) {
@@ -451,15 +470,9 @@ class ChatProvider extends ChangeNotifier {
           sessionIds.contains(_currentSession!.id)) {
         createNewChat();
       }
-      // Clean up persisted spatial storage
       for (final sid in sessionIds) {
-        final keysToRemove = _spatialResults.keys
-            .where((k) => k.startsWith(sid))
-            .toList();
-        for (final k in keysToRemove) {
-          _spatialResults.remove(k);
-          await StorageService.remove('$_spatialStoragePrefix$k');
-        }
+        await _clearPersistedSpatialForSession(sid);
+        _spatialResults.removeWhere((k, _) => k.startsWith('${sid}_ai_'));
       }
       notifyListeners();
       return true;
@@ -473,11 +486,10 @@ class ChatProvider extends ChangeNotifier {
   Future<bool> deleteAllSessions() async {
     try {
       await _apiService.deleteAllSessions();
-      _sessions.clear();
-      // Clear all persisted spatial results
-      for (final k in _spatialResults.keys.toList()) {
-        await StorageService.remove('$_spatialStoragePrefix$k');
+      for (final s in _sessions) {
+        await _clearPersistedSpatialForSession(s.id);
       }
+      _sessions.clear();
       _spatialResults.clear();
       createNewChat();
       notifyListeners();
@@ -494,12 +506,14 @@ class ChatProvider extends ChangeNotifier {
     return {
       'title': _currentSession!.title,
       'created': _currentSession!.createdAt.toIso8601String(),
-      'messages': _currentSession!.messages.map((m) => <String, dynamic>{
+      'messages': _currentSession!.messages
+          .map((m) => <String, dynamic>{
         'sender': m.sender,
         'content': m.content,
         'timestamp': m.timestamp.toIso8601String(),
         'hasSpatial': _spatialResults.containsKey(m.id),
-      }).toList(),
+      })
+          .toList(),
     };
   }
 
@@ -507,12 +521,14 @@ class ChatProvider extends ChangeNotifier {
     return {
       'exportDate': DateTime.now().toIso8601String(),
       'totalSessions': _sessions.length,
-      'sessions': _sessions.map((s) => <String, dynamic>{
+      'sessions': _sessions
+          .map((s) => <String, dynamic>{
         'id': s.id,
         'title': s.title,
         'created': s.createdAt.toIso8601String(),
         'messageCount': s.messages.length,
-      }).toList(),
+      })
+          .toList(),
     };
   }
 
@@ -578,8 +594,7 @@ class ChatProvider extends ChangeNotifier {
   }
 }
 
-/// Minimal stub that satisfies SpatialAnalysisService.buildSpatialAnalysis
-/// when restoring from storage (no real ChatResponse available).
+// ─── Minimal stub used when restoring spatial results from storage ────────────
 class _DummyChatResponse implements ChatResponse {
   @override
   String get message => '';
