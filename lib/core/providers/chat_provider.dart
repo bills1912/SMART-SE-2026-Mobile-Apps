@@ -230,6 +230,35 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  // ─── Edit & Resend ────────────────────────────────────────────────────────
+
+  /// Edit a user message: remove it and all subsequent messages, then resend
+  /// with the new content.
+  void editAndResend(String messageId, String newContent) {
+    if (_currentSession == null || newContent.trim().isEmpty) return;
+
+    final messages = _currentSession!.messages;
+    final editIndex = messages.indexWhere((m) => m.id == messageId);
+    if (editIndex < 0) return;
+
+    // Remove the edited message and everything after it
+    final trimmedMessages = messages.sublist(0, editIndex);
+
+    // Also remove spatial results for removed AI messages
+    for (int i = editIndex; i < messages.length; i++) {
+      _spatialResults.remove(messages[i].id);
+    }
+
+    _currentSession = _currentSession!.copyWith(
+      messages: trimmedMessages,
+      updatedAt: DateTime.now(),
+    );
+    notifyListeners();
+
+    // Now send the edited content as a new message
+    sendMessage(newContent);
+  }
+
   // ─── Send Message ─────────────────────────────────────────────────────────
   Future<ChatResponse?> sendMessage(String message) async {
     if (message.trim().isEmpty || _isSending) return null;

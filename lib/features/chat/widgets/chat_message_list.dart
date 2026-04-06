@@ -54,6 +54,12 @@ class _ChatMessageListState extends State<ChatMessageList> {
     super.dispose();
   }
 
+  /// Handle edit: remove messages from the edited one onward, then resend
+  void _handleEditMessage(String messageId, String newContent) {
+    final chatProvider = context.read<ChatProvider>();
+    chatProvider.editAndResend(messageId, newContent);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -83,12 +89,16 @@ class _ChatMessageListState extends State<ChatMessageList> {
       isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
         // ── Message bubble ──────────────────────────────────────────
-        MessageBubble(message: message, isUser: isUser)
+        MessageBubble(
+          message: message,
+          isUser: isUser,
+          onEdit: isUser ? _handleEditMessage : null,
+        )
             .animate(delay: Duration(milliseconds: index * 50))
             .fadeIn(duration: 300.ms)
             .slideX(begin: isUser ? 0.1 : -0.1),
 
-        // ── Spatial Map & Analysis (NEW) ────────────────────────────
+        // ── Spatial Map & Analysis ──────────────────────────────────
         if (!isUser && spatialResult != null) ...[
           const SizedBox(height: 12),
           SpatialAnalysisCard(result: spatialResult),
@@ -151,7 +161,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
                 color: isDark ? AppColors.darkCard : Colors.white,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                  color:
+                  isDark ? AppColors.darkBorder : AppColors.lightBorder,
                 ),
               ),
               child: Column(
@@ -183,8 +194,10 @@ class _ChatMessageListState extends State<ChatMessageList> {
                         const SizedBox(width: 8),
                         Text(
                           'Memproses data & analisis spasial…',
-                          style:
-                          Theme.of(context).textTheme.labelSmall?.copyWith(
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(
                             color: AppColors.primaryOrange,
                           ),
                         ),
