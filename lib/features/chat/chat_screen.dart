@@ -8,6 +8,7 @@ import '../../core/providers/chat_provider.dart';
 import '../../core/providers/theme_provider.dart';
 import '../widgets/gradient_button.dart';
 import '../widgets/custom_text_field.dart';
+import '../widgets/pdf_export_button.dart';
 import 'widgets/chat_sidebar.dart';
 import 'widgets/chat_message_list.dart';
 import 'widgets/welcome_view.dart';
@@ -26,7 +27,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _isRecording = false;
 
-  // FIX: Track if back was pressed once already (for double-tap-to-exit UX)
+  // Used for double-tap-to-exit ONLY when there is no previous route
+  // (i.e. user opened the app directly on /chat without going through /dashboard).
   DateTime? _lastBackPressTime;
 
   @override
@@ -74,20 +76,26 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _isRecording = !_isRecording);
   }
 
-  /// FIX: Handle back button press — show toast on first press, exit on second
+  /// Back button behaviour:
+  /// - If dashboard (or any prior route) is in the navigation stack → just pop back normally.
+  /// - If this is the root screen (no prior route) → double-tap to exit pattern.
   Future<bool> _onWillPop() async {
+    // If there is a previous route in the stack, let Navigator handle it normally.
+    if (Navigator.of(context).canPop()) {
+      return true; // allow pop → goes back to dashboard
+    }
+
+    // No previous route → double-tap-to-exit
     final now = DateTime.now();
     final isDoubleBack = _lastBackPressTime != null &&
         now.difference(_lastBackPressTime!) < const Duration(seconds: 2);
 
     if (isDoubleBack) {
-      // Exit the app
       SystemNavigator.pop();
       return true;
     }
 
     _lastBackPressTime = now;
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Tekan sekali lagi untuk keluar'),
@@ -96,8 +104,16 @@ class _ChatScreenState extends State<ChatScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
-
     return false;
+  }
+
+  void _goBackToDashboard() {
+    if (Navigator.of(context).canPop()) {
+      Navigator.pop(context);
+    } else {
+      // Fallback: push dashboard if somehow not in stack
+      Navigator.pushReplacementNamed(context, '/dashboard');
+    }
   }
 
   @override
@@ -109,7 +125,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final realMessages =
     messages.where((m) => !m.id.startsWith('welcome_')).toList();
 
-    // FIX: Wrap with WillPopScope to intercept back button on dashboard
     return WillPopScope(
       onWillPop: _onWillPop,
       child: Scaffold(
@@ -142,7 +157,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   )
                       : Column(
                     children: [
-                      // Messages
                       Expanded(
                         child: ChatMessageList(
                           messages: realMessages,
@@ -150,8 +164,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           scrapingStatus: chatProvider.scrapingStatus,
                         ),
                       ),
-
-                      // Input Area
                       _buildInputArea(isDark, chatProvider.isSending),
                     ],
                   ),
@@ -166,21 +178,37 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildAppBar(bool isDark) {
     final themeProvider = context.watch<ThemeProvider>();
+    final canPop = Navigator.of(context).canPop();
+    final chatProvider = context.watch<ChatProvider>();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
         children: [
-          // Menu Button
-          IconButton(
-            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-            icon: Icon(
-              Icons.menu_rounded,
-              color: isDark
-                  ? AppColors.darkTextPrimary
-                  : AppColors.lightTextPrimary,
+          // ── Back to Dashboard button (shown when dashboard is in stack)
+          // OR Menu button (shown when chat is the root screen)
+          if (canPop)
+            IconButton(
+              onPressed: _goBackToDashboard,
+              tooltip: 'Kembali ke Dashboard',
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: isDark
+                    ? AppColors.darkTextPrimary
+                    : AppColors.lightTextPrimary,
+                size: 20,
+              ),
+            )
+          else
+            IconButton(
+              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+              icon: Icon(
+                Icons.menu_rounded,
+                color: isDark
+                    ? AppColors.darkTextPrimary
+                    : AppColors.lightTextPrimary,
+              ),
             ),
-          ),
 
           // Logo & Title
           Container(
@@ -196,14 +224,41 @@ class _ChatScreenState extends State<ChatScreen> {
               size: 18,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              'SMART SE2026',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-              overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'SMART SE2026',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (canPop)
+                  Text(
+                    'Chat Analisis',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: isDark
+                          ? AppColors.darkTextTertiary
+                          : AppColors.lightTextTertiary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Sidebar/history button (always accessible via icon)
+          IconButton(
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            tooltip: 'Riwayat Chat',
+            icon: Icon(
+              Icons.history_rounded,
+              color: isDark
+                  ? AppColors.darkTextSecondary
+                  : AppColors.lightTextSecondary,
+              size: 22,
             ),
           ),
 
@@ -222,6 +277,9 @@ class _ChatScreenState extends State<ChatScreen> {
               size: 22,
             ),
           ),
+
+          // PDF Export
+          PdfExportButton(session: chatProvider.currentSession),
 
           // User Menu
           const UserMenu(),
@@ -349,8 +407,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           )
                               : Icon(
                             Icons.send_rounded,
-                            color:
-                            _messageController.text.trim().isNotEmpty
+                            color: _messageController.text
+                                .trim()
+                                .isNotEmpty
                                 ? Colors.white
                                 : (isDark
                                 ? AppColors.darkTextTertiary
@@ -372,7 +431,6 @@ class _ChatScreenState extends State<ChatScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Data Status
               Row(
                 children: [
                   Icon(
@@ -399,10 +457,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ],
               ),
-
               const SizedBox(width: 16),
-
-              // Connection Status
               Row(
                 children: [
                   Container(

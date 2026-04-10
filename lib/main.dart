@@ -7,12 +7,14 @@ import 'core/theme/app_theme.dart';
 import 'core/providers/theme_provider.dart';
 import 'core/providers/auth_provider.dart';
 import 'core/providers/chat_provider.dart';
+import 'core/providers/dashboard_provider.dart';
 import 'core/services/storage_service.dart';
 import 'core/services/api_service.dart';
 
 import 'features/splash/splash_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/register_screen.dart';
+import 'features/dashboard/dashboard_screen.dart';
 import 'features/chat/chat_screen.dart';
 import 'features/chat/chat_detail_screen.dart';
 import 'features/settings/settings_screen.dart';
@@ -20,20 +22,15 @@ import 'features/profile/profile_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Initialize Hive for local storage
+
   await Hive.initFlutter();
-  
-  // Initialize services
   await StorageService.init();
-  
-  // Set preferred orientations
+
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  
-  // Set system UI overlay style
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -42,7 +39,7 @@ void main() async {
       systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
-  
+
   runApp(const SmartSE2026App());
 }
 
@@ -60,11 +57,11 @@ class SmartSE2026App extends StatelessWidget {
             ApiService(),
             context.read<AuthProvider>(),
           ),
-          update: (context, auth, previous) => previous ?? ChatProvider(
-            ApiService(),
-            auth,
-          ),
+          update: (context, auth, previous) =>
+          previous ?? ChatProvider(ApiService(), auth),
         ),
+        // ── NEW: DashboardProvider ──────────────────────────────────
+        ChangeNotifierProvider(create: (_) => DashboardProvider()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {
@@ -90,7 +87,11 @@ class SmartSE2026App extends StatelessWidget {
         return _buildPageRoute(const LoginScreen(), settings);
       case '/register':
         return _buildPageRoute(const RegisterScreen(), settings);
+
+    // ── NEW: /dashboard → DashboardScreen (was ChatScreen) ───────
       case '/dashboard':
+        return _buildPageRoute(const DashboardScreen(), settings);
+
       case '/chat':
         return _buildPageRoute(const ChatScreen(), settings);
       case '/chat-detail':
@@ -117,21 +118,17 @@ class SmartSE2026App extends StatelessWidget {
         const end = Offset.zero;
         const curve = Curves.easeInOutCubic;
 
-        var tween = Tween(begin: begin, end: end).chain(
+        final tween = Tween(begin: begin, end: end).chain(
           CurveTween(curve: curve),
         );
-
-        var offsetAnimation = animation.drive(tween);
-        var fadeAnimation = animation.drive(
+        final offsetAnimation = animation.drive(tween);
+        final fadeAnimation = animation.drive(
           Tween(begin: 0.0, end: 1.0).chain(CurveTween(curve: curve)),
         );
 
         return SlideTransition(
           position: offsetAnimation,
-          child: FadeTransition(
-            opacity: fadeAnimation,
-            child: child,
-          ),
+          child: FadeTransition(opacity: fadeAnimation, child: child),
         );
       },
       transitionDuration: const Duration(milliseconds: 300),
