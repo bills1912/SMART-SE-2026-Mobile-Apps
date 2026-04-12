@@ -42,6 +42,16 @@ class ChatProvider extends ChangeNotifier {
   // ─────────────────────────────────────────────────────────────────────────
   static const String _sqPrefix = 'sq__';
 
+  // Default titles returned by backend that should be replaced
+  static const _kDefaultTitles = {
+    'policy analysis session',
+    'analisis sensus baru',
+    'new chat',
+    'chat baru',
+    'untitled',
+    '',
+  };
+
   ChatProvider(this._apiService, this._authProvider) {
     _authProvider.addListener(_onAuthChanged);
     _init();
@@ -111,7 +121,32 @@ class ChatProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
-      _sessions = await _apiService.getSessions();
+      final rawSessions = await _apiService.getSessions();
+
+      // Override backend-default titles with locally-stored meaningful titles
+      _sessions = rawSessions.map((session) {
+        final storedTitle = StorageService.getString('_title_${session.id}');
+        if (storedTitle != null &&
+            storedTitle.isNotEmpty &&
+            !_isDefaultTitle(storedTitle)) {
+          return session.copyWith(title: storedTitle);
+        }
+        // If backend title is also a default, mark it clearly
+        if (_isDefaultTitle(session.title)) {
+          // Try to derive title from first user message if messages are loaded
+          final firstUserMsg = session.messages
+              .where((m) => m.isUser && !m.id.startsWith('welcome_'))
+              .firstOrNull;
+          if (firstUserMsg != null) {
+            final derived = _generateTitle(firstUserMsg.content);
+            // Persist so future loads use this
+            StorageService.setString('_title_${session.id}', derived);
+            return session.copyWith(title: derived);
+          }
+        }
+        return session;
+      }).toList();
+
       _sessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       _error = null;
     } catch (e) {
@@ -154,12 +189,31 @@ class ChatProvider extends ChangeNotifier {
       }
 
       final session = await _apiService.getSession(sessionId);
-      _currentSession = session;
-      // Rebuild with the fully-loaded session (real backend message IDs)
-      _rebuildSpatialResultsForSession(session);
+
+      // Apply stored title override
+      final storedTitle = StorageService.getString('_title_$sessionId');
+      ChatSession resolvedSession = session;
+      if (storedTitle != null &&
+          storedTitle.isNotEmpty &&
+          !_isDefaultTitle(storedTitle)) {
+        resolvedSession = session.copyWith(title: storedTitle);
+      } else if (_isDefaultTitle(session.title)) {
+        // Try to derive from first user message
+        final firstUserMsg = session.messages
+            .where((m) => m.isUser && !m.id.startsWith('welcome_'))
+            .firstOrNull;
+        if (firstUserMsg != null) {
+          final derived = _generateTitle(firstUserMsg.content);
+          await StorageService.setString('_title_$sessionId', derived);
+          resolvedSession = session.copyWith(title: derived);
+        }
+      }
+
+      _currentSession = resolvedSession;
+      _rebuildSpatialResultsForSession(resolvedSession);
 
       final idx = _sessions.indexWhere((s) => s.id == sessionId);
-      if (idx >= 0) _sessions[idx] = session;
+      if (idx >= 0) _sessions[idx] = resolvedSession;
       _error = null;
     } catch (e) {
       _error = 'Gagal memuat sesi';
@@ -187,8 +241,7 @@ class ChatProvider extends ChangeNotifier {
     if (session.id.isEmpty) return;
 
     // Collect AI messages in order
-    final aiMessages =
-    session.messages.where((m) => m.isAI).toList();
+    final aiMessages = session.messages.where((m) => m.isAI).toList();
 
     for (int i = 0; i < aiMessages.length; i++) {
       final msg = aiMessages[i];
@@ -228,6 +281,51 @@ class ChatProvider extends ChangeNotifier {
       if (val == null) break;
       await StorageService.remove(key);
     }
+  }
+
+  // ─── Title Generation ─────────────────────────────────────────────────────
+
+  /// Generates a meaningful title from the first user message.
+  /// Mimics how Claude, Gemini, and ChatGPT name their chats:
+  /// take the core content, trim filler words, cap at ~40 chars.
+  String _generateTitle(String firstMessage) {
+    final cleaned = firstMessage
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ');
+
+    if (cleaned.isEmpty) return 'Analisis Baru';
+
+    // Remove common filler question starters in Indonesian & English
+    final fillerPrefixes = RegExp(
+      r'^(tolong|coba|bisa|mohon|please|can you|could you|help me|'
+      r'tampilkan|tunjukkan|buatkan|berikan|jelaskan|analisis|analisa|'
+      r'show me|give me|tell me|explain|analyze|generate)\s+',
+      caseSensitive: false,
+    );
+    final withoutFiller = cleaned.replaceFirst(fillerPrefixes, '');
+
+    // Take first sentence if multi-sentence
+    final firstSentence = withoutFiller.split(RegExp(r'[.!?]')).first.trim();
+
+    // Take up to 7 words
+    final words = firstSentence.split(' ');
+    final titleWords = words.take(7).join(' ');
+
+    // Capitalize first letter
+    if (titleWords.isEmpty) return 'Analisis Baru';
+    final title = titleWords[0].toUpperCase() + titleWords.substring(1);
+
+    // Trim to 45 chars max, add ellipsis if cut
+    if (title.length > 45) {
+      return '${title.substring(0, 42)}...';
+    }
+    return title;
+  }
+
+  /// Returns true if the given title is a generic backend default
+  /// that should be replaced with a user-derived title.
+  bool _isDefaultTitle(String title) {
+    return _kDefaultTitles.contains(title.toLowerCase().trim());
   }
 
   // ─── Edit & Resend ────────────────────────────────────────────────────────
@@ -275,6 +373,13 @@ class ChatProvider extends ChangeNotifier {
       timestamp: DateTime.now(),
     );
 
+    // Determine if this is the FIRST real message in the session
+    // (used for title generation)
+    final isFirstMessage = _currentSession == null ||
+        _currentSession!.messages
+            .where((m) => m.isUser && !m.id.startsWith('welcome_'))
+            .isEmpty;
+
     if (_currentSession != null) {
       _currentSession = _currentSession!.copyWith(
         messages: [..._currentSession!.messages, userMessage],
@@ -320,16 +425,37 @@ class ChatProvider extends ChangeNotifier {
         policies: response.policies,
       );
 
-      // Commit updated session (needed to count AI message position below)
+      // ── Title resolution ───────────────────────────────────────────────────
+      // Priority:
+      //   1. If this is the first message → always generate from user message
+      //   2. If current title is a default backend title → replace it
+      //   3. Otherwise keep the existing title
+      final currentTitle = _currentSession!.title;
+      String resolvedTitle;
+
+      if (isFirstMessage || _isDefaultTitle(currentTitle)) {
+        resolvedTitle = _generateTitle(message);
+      } else {
+        resolvedTitle = currentTitle;
+      }
+
+      // Commit updated session
       _currentSession = _currentSession!.copyWith(
         id: response.sessionId,
-        title: _currentSession!.title.isEmpty ||
-            _currentSession!.title == 'Analisis Sensus Baru'
-            ? _generateTitle(message)
-            : _currentSession!.title,
+        title: resolvedTitle,
         messages: [..._currentSession!.messages, aiMessage],
         updatedAt: DateTime.now(),
       );
+
+      // ── Persist the resolved title to local storage so it survives reload ──
+      // We store it keyed by sessionId so loadSessions can override
+      // the backend default.
+      if (isFirstMessage || _isDefaultTitle(currentTitle)) {
+        await StorageService.setString(
+          '_title_${response.sessionId}',
+          resolvedTitle,
+        );
+      }
 
       // ── Spatial Analysis ──────────────────────────────────────────────────
       if (SpatialAnalysisService.isSpatialQuery(message)) {
@@ -469,17 +595,13 @@ class ChatProvider extends ChangeNotifier {
     _sessions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
-  String _generateTitle(String message) {
-    final words = message.split(' ').take(6).join(' ');
-    return words.length > 50 ? '${words.substring(0, 47)}...' : words;
-  }
-
   Future<bool> deleteSession(String sessionId) async {
     try {
       await _apiService.deleteSession(sessionId);
       _sessions.removeWhere((s) => s.id == sessionId);
       if (_currentSession?.id == sessionId) createNewChat();
       await _clearPersistedSpatialForSession(sessionId);
+      await StorageService.remove('_title_$sessionId');
       _spatialResults
           .removeWhere((k, _) => k.startsWith('${sessionId}_ai_'));
       notifyListeners();
@@ -501,6 +623,7 @@ class ChatProvider extends ChangeNotifier {
       }
       for (final sid in sessionIds) {
         await _clearPersistedSpatialForSession(sid);
+        await StorageService.remove('_title_$sid');
         _spatialResults.removeWhere((k, _) => k.startsWith('${sid}_ai_'));
       }
       notifyListeners();
@@ -517,6 +640,7 @@ class ChatProvider extends ChangeNotifier {
       await _apiService.deleteAllSessions();
       for (final s in _sessions) {
         await _clearPersistedSpatialForSession(s.id);
+        await StorageService.remove('_title_${s.id}');
       }
       _sessions.clear();
       _spatialResults.clear();

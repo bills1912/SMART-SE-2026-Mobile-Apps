@@ -61,7 +61,8 @@ class AuthResponse {
 
 /// ApiService - handles all HTTP requests to backend
 class ApiService {
-  static const String baseUrl = 'https://smart-se26-agentic-ai-production.up.railway.app/api';
+  static const String baseUrl =
+      'https://smart-se26-agentic-ai-production.up.railway.app/api';
 
   late final Dio _dio;
 
@@ -78,7 +79,6 @@ class ApiService {
 
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        // Add session token to all requests
         final token = await StorageService.getSecure('session_token');
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
@@ -101,29 +101,28 @@ class ApiService {
   // HEALTH CHECK
   // ============================================
 
-  /// Health check - basic
   Future<bool> checkHealth() async {
     try {
-      final response = await _dio.get('/health', options: Options(
-        sendTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 10),
-      ));
+      final response = await _dio.get(
+        '/health',
+        options: Options(
+          sendTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
       return response.data['status'] == 'healthy';
     } catch (e) {
       return false;
     }
   }
 
-  /// Health check - detailed (used by ChatProvider)
-  /// Backend: GET /api/health
   Future<Map<String, dynamic>> getHealth() async {
     final response = await _dio.get('/health');
     return response.data;
   }
 
   // ============================================
-  // AUTHENTICATION - matches /api/auth/*
-  // Backend: auth_routes.py
+  // AUTHENTICATION
   // ============================================
 
   Future<AuthResponse> login(String email, String password) async {
@@ -131,31 +130,24 @@ class ApiService {
       'email': email,
       'password': password,
     });
-
     final authResponse = AuthResponse.fromJson(response.data);
-
-    // Save session token if login successful
     if (authResponse.success && authResponse.sessionToken != null) {
       await StorageService.setSecure('session_token', authResponse.sessionToken!);
     }
-
     return authResponse;
   }
 
-  Future<AuthResponse> register(String email, String password, String name) async {
+  Future<AuthResponse> register(
+      String email, String password, String name) async {
     final response = await _dio.post('/auth/register', data: {
       'email': email,
       'password': password,
       'name': name,
     });
-
     final authResponse = AuthResponse.fromJson(response.data);
-
-    // Save session token if registration successful
     if (authResponse.success && authResponse.sessionToken != null) {
       await StorageService.setSecure('session_token', authResponse.sessionToken!);
     }
-
     return authResponse;
   }
 
@@ -170,18 +162,14 @@ class ApiService {
     } catch (e) {
       print('[API] Logout error: $e');
     } finally {
-      // Always clear local storage
       await StorageService.instance.clearAll();
     }
   }
 
-  // Google OAuth URL - for WebView/Browser (Web flow)
   String getGoogleLoginUrl() {
     return '$baseUrl/auth/google/login';
   }
 
-  /// Login with Google ID Token (Native mobile Google Sign-In)
-  /// Backend: POST /api/auth/google/mobile
   Future<AuthResponse> loginWithGoogleToken({
     required String idToken,
     required String email,
@@ -194,18 +182,13 @@ class ApiService {
       'name': name,
       'picture': picture,
     });
-
     final authResponse = AuthResponse.fromJson(response.data);
-
-    // Save session token if login successful
     if (authResponse.success && authResponse.sessionToken != null) {
       await StorageService.setSecure('session_token', authResponse.sessionToken!);
     }
-
     return authResponse;
   }
 
-  // Check if Google OAuth is configured
   Future<Map<String, dynamic>> getGoogleOAuthStatus() async {
     try {
       final response = await _dio.get('/auth/google/status');
@@ -216,12 +199,9 @@ class ApiService {
   }
 
   // ============================================
-  // CHAT / SESSIONS - matches /api/*
-  // Backend: server.py
+  // CHAT / SESSIONS
   // ============================================
 
-  /// Send a message and get AI response
-  /// Backend: POST /api/chat
   Future<ChatResponse> sendMessage(String message, {String? sessionId}) async {
     final response = await _dio.post('/chat', data: {
       'message': message,
@@ -230,30 +210,17 @@ class ApiService {
     return ChatResponse.fromJson(response.data);
   }
 
-  /// Get all chat sessions for current user
-  /// Backend: GET /api/sessions
   Future<List<ChatSession>> getSessions() async {
     final response = await _dio.get('/sessions');
 
-    print('[API] getSessions response type: ${response.data.runtimeType}');
-    print('[API] getSessions response: ${response.data}');
-
-    // Handle both formats:
-    // 1. List directly: [session1, session2, ...]
-    // 2. Object with sessions key: {"sessions": [...]}
     List<dynamic> sessionsData;
-
     if (response.data is List) {
-      // Backend returns List directly
       sessionsData = response.data;
     } else if (response.data is Map) {
-      // Backend returns object with 'sessions' key
       sessionsData = response.data['sessions'] ?? [];
     } else {
       sessionsData = [];
     }
-
-    print('[API] Parsing ${sessionsData.length} sessions...');
 
     List<ChatSession> sessions = [];
     for (var s in sessionsData) {
@@ -267,13 +234,9 @@ class ApiService {
         print('[API] Error parsing session: $e');
       }
     }
-
-    print('[API] Successfully parsed ${sessions.length} sessions');
     return sessions;
   }
 
-  /// Get single session with messages
-  /// Backend: GET /api/sessions/{session_id}
   Future<ChatSession> getSession(String sessionId) async {
     final response = await _dio.get('/sessions/$sessionId');
     return ChatSession.fromJson(response.data);
@@ -287,66 +250,96 @@ class ApiService {
 
   /// Delete multiple sessions (batch)
   /// Backend: DELETE /api/sessions/batch
+  ///
+  /// FIX: Route /sessions/batch MUST be registered BEFORE /sessions/{session_id}
+  /// in the backend (server.py). If you get 404, check the route order in server.py.
   Future<void> deleteSessions(List<String> sessionIds) async {
-    await _dio.delete('/sessions/batch', data: {
-      'session_ids': sessionIds,
-    });
+    try {
+      await _dio.delete(
+        '/sessions/batch',
+        data: {'session_ids': sessionIds},
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        // Fallback: delete one by one if batch endpoint is unavailable
+        // (e.g. backend route order bug not yet fixed)
+        print('[API] Batch delete returned 404, falling back to sequential delete');
+        for (final id in sessionIds) {
+          try {
+            await _dio.delete('/sessions/$id');
+          } catch (innerE) {
+            print('[API] Failed to delete session $id: $innerE');
+          }
+        }
+      } else {
+        rethrow;
+      }
+    }
   }
 
   /// Delete all sessions
   /// Backend: DELETE /api/sessions/all
+  ///
+  /// FIX: Route /sessions/all MUST be registered BEFORE /sessions/{session_id}
+  /// in the backend (server.py). If you get 404, check the route order in server.py.
   Future<void> deleteAllSessions() async {
-    await _dio.delete('/sessions/all');
+    try {
+      await _dio.delete('/sessions/all');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        // Fallback: fetch all sessions then delete one by one
+        print('[API] Delete-all returned 404, falling back to fetch-then-delete');
+        final sessions = await getSessions();
+        for (final session in sessions) {
+          if (session.id.isNotEmpty) {
+            try {
+              await _dio.delete('/sessions/${session.id}');
+            } catch (innerE) {
+              print('[API] Failed to delete session ${session.id}: $innerE');
+            }
+          }
+        }
+      } else {
+        rethrow;
+      }
+    }
   }
 
   // ============================================
-  // REPORTS - matches /api/report/*
-  // Backend: server.py
+  // REPORTS
   // ============================================
 
-  /// Get report URL for a session
-  /// Backend: GET /api/report/{session_id}/{format}
   String getReportUrl(String sessionId, String format) {
     return '$baseUrl/report/$sessionId/$format';
   }
 
-  /// Get report preview URL
-  /// Backend: GET /api/report/{session_id}/preview
   String getReportPreviewUrl(String sessionId) {
     return '$baseUrl/report/$sessionId/preview';
   }
 
   // ============================================
-  // DATA SCRAPING - matches /api/scraper/*
-  // Backend: scraper_routes.py
+  // DATA SCRAPING
   // ============================================
 
-  /// Trigger data scraping
-  /// Backend: POST /api/scraper/scrape
   Future<Map<String, dynamic>> triggerScraping() async {
     final response = await _dio.post('/scraper/scrape');
     return response.data;
   }
 
-  /// Get scraping status
-  /// Backend: GET /api/scraper/status
   Future<Map<String, dynamic>> getScrapingStatus() async {
     final response = await _dio.get('/scraper/status');
     return response.data;
   }
 
-  /// Get available data sources
-  /// Backend: GET /api/scraper/sources
   Future<List<Map<String, dynamic>>> getDataSources() async {
     final response = await _dio.get('/scraper/sources');
     return List<Map<String, dynamic>>.from(response.data['sources'] ?? []);
   }
 
   // ============================================
-  // ANALYTICS - matches /api/analytics/*
+  // ANALYTICS
   // ============================================
 
-  /// Get dashboard statistics
   Future<Map<String, dynamic>> getDashboardStats() async {
     try {
       final response = await _dio.get('/analytics/dashboard');
@@ -356,7 +349,6 @@ class ApiService {
     }
   }
 
-  /// Get chart data for visualization
   Future<Map<String, dynamic>> getChartData(String chartType) async {
     try {
       final response = await _dio.get('/analytics/charts/$chartType');
@@ -370,11 +362,7 @@ class ApiService {
   // USER PROFILE
   // ============================================
 
-  /// Update user profile
-  Future<AuthResponse> updateProfile({
-    String? name,
-    String? picture,
-  }) async {
+  Future<AuthResponse> updateProfile({String? name, String? picture}) async {
     final response = await _dio.patch('/auth/profile', data: {
       if (name != null) 'name': name,
       if (picture != null) 'picture': picture,
@@ -382,7 +370,6 @@ class ApiService {
     return AuthResponse.fromJson(response.data);
   }
 
-  /// Change password
   Future<Map<String, dynamic>> changePassword({
     required String currentPassword,
     required String newPassword,
@@ -398,7 +385,6 @@ class ApiService {
   // EXPORT
   // ============================================
 
-  /// Export chat as PDF
   Future<List<int>> exportChatPdf(String sessionId) async {
     final response = await _dio.get(
       '/chat/export/$sessionId/pdf',
@@ -407,7 +393,6 @@ class ApiService {
     return response.data;
   }
 
-  /// Export chat as JSON
   Future<Map<String, dynamic>> exportChatJson(String sessionId) async {
     final response = await _dio.get('/chat/export/$sessionId/json');
     return response.data;

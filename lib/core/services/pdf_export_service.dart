@@ -392,70 +392,88 @@ class PdfExportService {
         : p.priority == 'medium' ? 'SEDANG' : 'RENDAH';
 
     return pw.Container(
-        padding: const pw.EdgeInsets.all(14),
         decoration: pw.BoxDecoration(
-            color: _white, borderRadius: pw.BorderRadius.circular(10),
-            border: pw.Border(
-                left: pw.BorderSide(color: pc, width: 4),
-                top: pw.BorderSide(color: _border),
-                right: pw.BorderSide(color: _border),
-                bottom: pw.BorderSide(color: _border))),
-        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-          pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-            pw.Container(width: 24, height: 24,
+            color: _white,
+            borderRadius: pw.BorderRadius.circular(10),
+            border: pw.Border.all(color: _border)),
+        child: pw.Stack(
+          children: [
+            // Left accent bar
+            pw.Positioned(
+              left: 0, top: 0, bottom: 0,
+              child: pw.Container(
+                width: 4,
                 decoration: pw.BoxDecoration(
-                    color: pc.shade(0.1), borderRadius: pw.BorderRadius.circular(6)),
-                child: pw.Center(child: pw.Text('$num',
-                    style: pw.TextStyle(font: fBold, fontSize: 10, color: pc)))),
-            pw.SizedBox(width: 10),
-            pw.Expanded(child: pw.Text(p.title,
-                style: pw.TextStyle(font: fBold, fontSize: 12, color: _textDark))),
-            pw.SizedBox(width: 8),
-            pw.Container(
-                padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: pw.BoxDecoration(
-                    color: pc.shade(0.08), borderRadius: pw.BorderRadius.circular(6)),
-                child: pw.Text('PRIORITAS $pl',
-                    style: pw.TextStyle(font: fBold, fontSize: 7, color: pc))),
-          ]),
-          pw.SizedBox(height: 8),
-          pw.Container(
-              padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: pw.BoxDecoration(
-                  color: _bgGrey, borderRadius: pw.BorderRadius.circular(6)),
-              child: pw.Text(p.category.displayName,
-                  style: pw.TextStyle(font: fReg, fontSize: 8, color: _textMid))),
-          pw.SizedBox(height: 8),
-          pw.Text(p.description,
-              style: pw.TextStyle(font: fReg, fontSize: 10, color: _textDark, lineSpacing: 2)),
-          if (p.impact.isNotEmpty) ...[
-            pw.SizedBox(height: 8),
-            pw.Text('Dampak yang Diharapkan:',
-                style: pw.TextStyle(font: fBold, fontSize: 9, color: _orange)),
-            pw.SizedBox(height: 3),
-            pw.Text(p.impact,
-                style: pw.TextStyle(font: fItal, fontSize: 9, color: _textMid, lineSpacing: 1.5)),
-          ],
-          if (p.implementationSteps.isNotEmpty) ...[
-            pw.SizedBox(height: 10),
-            pw.Text('Langkah Implementasi:',
-                style: pw.TextStyle(font: fBold, fontSize: 9, color: _textDark)),
-            pw.SizedBox(height: 4),
-            ...p.implementationSteps.asMap().entries.map((e) => pw.Padding(
-                padding: const pw.EdgeInsets.only(bottom: 4),
-                child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-                  pw.Container(width: 16, height: 16,
+                  color: pc,
+                  borderRadius: const pw.BorderRadius.only(
+                    topLeft: pw.Radius.circular(10),
+                    bottomLeft: pw.Radius.circular(10),
+                  ),
+                ),
+              ),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.fromLTRB(18, 14, 14, 14),
+              child:   pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+                  pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+                    pw.Container(width: 24, height: 24,
+                        decoration: pw.BoxDecoration(
+                            color: pc.shade(0.1), borderRadius: pw.BorderRadius.circular(6)),
+                        child: pw.Center(child: pw.Text('$num',
+                            style: pw.TextStyle(font: fBold, fontSize: 10, color: pc)))),
+                    pw.SizedBox(width: 10),
+                    pw.Expanded(child: pw.Text(p.title,
+                        style: pw.TextStyle(font: fBold, fontSize: 12, color: _textDark))),
+                    pw.SizedBox(width: 8),
+                    pw.Container(
+                        padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                        decoration: pw.BoxDecoration(
+                            color: pc.shade(0.08), borderRadius: pw.BorderRadius.circular(6)),
+                        child: pw.Text('PRIORITAS $pl',
+                            style: pw.TextStyle(font: fBold, fontSize: 7, color: pc))),
+                  ]),
+                  pw.SizedBox(height: 8),
+                  pw.Container(
+                      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: pw.BoxDecoration(
-                          gradient: const pw.LinearGradient(colors: [_red, _orange]),
-                          borderRadius: pw.BorderRadius.circular(4)),
-                      child: pw.Center(child: pw.Text('${e.key + 1}',
-                          style: pw.TextStyle(font: fBold, fontSize: 7, color: _white)))),
-                  pw.SizedBox(width: 8),
-                  pw.Expanded(child: pw.Text(e.value,
-                      style: pw.TextStyle(font: fReg, fontSize: 9, color: _textDark, lineSpacing: 1.5))),
-                ]))),
-          ],
-        ]));
+                          color: _bgGrey, borderRadius: pw.BorderRadius.circular(6)),
+                      child: pw.Text(p.category.displayName,
+                          style: pw.TextStyle(font: fReg, fontSize: 8, color: _textMid))),
+                  pw.SizedBox(height: 8),
+                  pw.Text(p.description,
+                      style: pw.TextStyle(font: fReg, fontSize: 10, color: _textDark, lineSpacing: 2)),
+                  if (p.impact.isNotEmpty) ...[
+                    pw.SizedBox(height: 8),
+                    pw.Text('Dampak yang Diharapkan:',
+                        style: pw.TextStyle(font: fBold, fontSize: 9, color: _orange)),
+                    pw.SizedBox(height: 3),
+                    pw.Text(p.impact,
+                        style: pw.TextStyle(font: fItal, fontSize: 9, color: _textMid, lineSpacing: 1.5)),
+                  ],
+                  if (p.implementationSteps.isNotEmpty) ...[
+                    pw.SizedBox(height: 10),
+                    pw.Text('Langkah Implementasi:',
+                        style: pw.TextStyle(font: fBold, fontSize: 9, color: _textDark)),
+                    pw.SizedBox(height: 4),
+                    ...p.implementationSteps.asMap().entries.map((e) => pw.Padding(
+                        padding: const pw.EdgeInsets.only(bottom: 4),
+                        child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+                          pw.Container(width: 16, height: 16,
+                              decoration: pw.BoxDecoration(
+                                  gradient: const pw.LinearGradient(colors: [_red, _orange]),
+                                  borderRadius: pw.BorderRadius.circular(4)),
+                              child: pw.Center(child: pw.Text('${e.key + 1}',
+                                  style: pw.TextStyle(font: fBold, fontSize: 7, color: _white)))),
+                          pw.SizedBox(width: 8),
+                          pw.Expanded(child: pw.Text(e.value,
+                              style: pw.TextStyle(font: fReg, fontSize: 9, color: _textDark, lineSpacing: 1.5))),
+                        ]))),
+                  ],
+                ])
+            )
+          ]
+        )
+    );
   }
 
   // ─── Insights ────────────────────────────────────────────────────────────────
