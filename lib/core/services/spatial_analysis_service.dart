@@ -4,32 +4,103 @@ import '../models/spatial_analysis_models.dart';
 import '../models/data/spatial_mock_data.dart';
 
 /// SpatialAnalysisService
-/// Converts chat responses into spatial analysis results.
-/// Uses SpatialMockData when live data has no coordinates.
+///
+/// PERBAIKAN: isSpatialQuery() sekarang hanya return true jika user
+/// SECARA EKSPLISIT meminta analisis berbasis peta/lokasi/spasial.
+///
+/// Sebelumnya hampir semua query (termasuk yang hanya menyebut nama provinsi
+/// atau kata "gambaran") dianggap spasial, sehingga peta selalu muncul.
+/// Sekarang hanya query yang memang meminta visualisasi geografis yang
+/// memunculkan peta.
 class SpatialAnalysisService {
 
-  /// Detect whether a user message requests spatial/map analysis
+  // ── Keyword Tiers ──────────────────────────────────────────────────────────
+  //
+  // TIER 1 — Eksplisit spasial: langsung return true jika ada salah satu.
+  // Ini kata kunci yang JELAS meminta peta / analisis berbasis lokasi.
+  static const _kExplicitSpatial = [
+    // Peta & map
+    'peta', 'map', 'petakan', 'tampilkan peta', 'show map', 'plot peta',
+    'visualisasi peta', 'geographic', 'geografis', 'geografi',
+
+    // Spasial eksplisit
+    'spasial', 'spatial', 'analisis spasial', 'spatial analysis',
+    'pola spasial', 'spatial pattern', 'distribusi spasial',
+    'distribusi geografis', 'sebaran geografis',
+
+    // Persebaran / distribusi dengan konteks lokasi
+    'persebaran wilayah', 'sebaran wilayah', 'sebaran daerah',
+    'persebaran daerah', 'sebaran antar provinsi', 'persebaran antar provinsi',
+    'persebaran di indonesia', 'sebaran di indonesia',
+    'sebaran usaha di', 'persebaran usaha di',
+
+    // Pusat ekonomi / klaster geografis
+    'pusat ekonomi', 'pusat perekonomian', 'economic center',
+    'economic hub', 'sentra ekonomi', 'klaster ekonomi',
+    'klaster wilayah', 'koridor ekonomi', 'economic corridor',
+
+    // Titik lokasi
+    'titik lokasi', 'lokasi usaha', 'sebaran titik', 'plot lokasi',
+    'visualisasi lokasi', 'tampilkan di peta', 'show on map',
+
+    // Ketimpangan spasial / wilayah
+    'ketimpangan wilayah', 'disparitas wilayah', 'kesenjangan geografis',
+    'kesenjangan wilayah', 'ketimpangan spasial',
+  ];
+
+  // TIER 2 — Memerlukan kombinasi: kata ini hanya memicu spatial jika
+  // JUGA ada kata dari _kSpatialModifier di query yang sama.
+  static const _kSpatialTrigger = [
+    'sebaran', 'persebaran', 'distribusi', 'penyebaran',
+  ];
+
+  // Modifier yang mengubah "sebaran/distribusi" menjadi query spasial
+  static const _kSpatialModifier = [
+    'peta', 'map', 'wilayah', 'geografis', 'spasial', 'spatial',
+    'lokasi', 'daerah', 'antar pulau', 'antar wilayah',
+  ];
+
+  // Kata-kata ini TIDAK cukup sendiri untuk memicu spatial —
+  // meskipun sebelumnya termasuk. Hanya nama wilayah / kata umum.
+  // (Daftar ini dokumentasi saja, tidak digunakan dalam kode)
+  // ignore: unused_field
+  static const _kNonSpatialAlone = [
+    'indonesia', 'nasional', 'gambaran', 'overview',
+    'jawa', 'sumatera', 'kalimantan', 'sulawesi', 'papua', 'bali',
+    'provinsi', 'daerah', 'wilayah', 'sebaran', 'distribusi',
+  ];
+
+  /// Deteksi apakah query meminta analisis SPASIAL / PETA.
+  ///
+  /// Return true HANYA jika:
+  ///   (a) Ada kata kunci eksplisit spasial (Tier 1), ATAU
+  ///   (b) Ada kata trigger (sebaran/distribusi) + modifier spasial (Tier 2)
+  ///
+  /// Kata-kata umum seperti nama provinsi, "gambaran", "overview",
+  /// "nasional" TIDAK cukup untuk memicu spatial map.
   static bool isSpatialQuery(String message) {
     final lower = message.toLowerCase();
-    final keywords = [
-      'peta', 'map', 'lokasi', 'location', 'wilayah', 'daerah', 'titik',
-      'persebaran', 'sebaran', 'distribusi spasial', 'spatial',
-      'pusat ekonomi', 'economic center', 'pusat perekonomian', 'sentra',
-      'koridor', 'corridor', 'klaster', 'cluster', 'konsentrasi',
-      'tampilkan di peta', 'show on map', 'visualisasi lokasi', 'plot',
-      'sebaran usaha', 'pola spasial', 'spatial pattern',
-      'mana yang paling', 'daerah mana', 'provinsi mana', 'pulau',
-      'jawa', 'sumatera', 'kalimantan', 'sulawesi', 'papua', 'bali',
-      // Also trigger on general queries so the map always shows
-      'gambaran', 'overview', 'nasional', 'indonesia', 'seluruh',
-    ];
-    return keywords.any((kw) => lower.contains(kw));
+
+    // Tier 1: kata kunci eksplisit spasial
+    for (final kw in _kExplicitSpatial) {
+      if (lower.contains(kw)) return true;
+    }
+
+    // Tier 2: kombinasi trigger + modifier
+    final hasTrigger = _kSpatialTrigger.any((t) => lower.contains(t));
+    if (hasTrigger) {
+      final hasModifier = _kSpatialModifier.any((m) => lower.contains(m));
+      if (hasModifier) return true;
+    }
+
+    return false;
   }
 
-  /// Detect analysis type from the user query
+  /// Deteksi tipe analisis spasial dari query
   static String detectAnalysisType(String message) {
     final lower = message.toLowerCase();
-    if (lower.contains('pusat') || lower.contains('center') || lower.contains('sentra')) {
+    if (lower.contains('pusat') || lower.contains('center') ||
+        lower.contains('sentra') || lower.contains('hub')) {
       return 'centers';
     }
     if (lower.contains('koridor') || lower.contains('corridor')) {
@@ -38,31 +109,27 @@ class SpatialAnalysisService {
     if (lower.contains('kepadatan') || lower.contains('density')) {
       return 'density';
     }
-    if (lower.contains('sektor') || lower.contains('sector') || lower.contains('kbli')) {
+    if (lower.contains('sektor') || lower.contains('sector') ||
+        lower.contains('kbli')) {
       return 'sector_map';
+    }
+    if (lower.contains('ketimpangan') || lower.contains('disparitas') ||
+        lower.contains('kesenjangan')) {
+      return 'gap';
     }
     return 'distribution';
   }
 
-  /// Build a full SpatialAnalysisResult from a ChatResponse.
-  /// Prioritises mock data for guaranteed rendering.
+  /// Build SpatialAnalysisResult dari ChatResponse.
   SpatialAnalysisResult buildSpatialAnalysis({
     required String query,
     required chat.ChatResponse response,
     required Map<String, dynamic> analysisData,
   }) {
-    // Always use mock data as the primary source for consistent rendering.
-    // The mock data is based on real SE 2016 figures.
     final mockResult = SpatialMockData.generateForQuery(query);
-
-    // If the backend response contained real province data, try to
-    // overlay it onto the mock locations.
-    final enriched = _tryEnrichWithBackendData(mockResult, analysisData);
-
-    return enriched;
+    return _tryEnrichWithBackendData(mockResult, analysisData);
   }
 
-  /// Attempt to replace mock totals with real totals from backend response.
   SpatialAnalysisResult _tryEnrichWithBackendData(
       SpatialAnalysisResult base,
       Map<String, dynamic> analysisData,
@@ -70,26 +137,20 @@ class SpatialAnalysisService {
     final topProvinces = analysisData['top_provinces'] as List?;
     if (topProvinces == null || topProvinces.isEmpty) return base;
 
-    // Build a lookup: province name (normalised) → total
     final realTotals = <String, int>{};
     for (final p in topProvinces) {
       if (p is Map<String, dynamic>) {
         final name = (p['provinsi'] ?? '').toString().toUpperCase();
-        final total = (p['total'] ?? 0) is num
-            ? (p['total'] as num).toInt()
-            : 0;
-        if (name.isNotEmpty && total > 0) {
-          realTotals[name] = total;
-        }
+        final total =
+        (p['total'] ?? 0) is num ? (p['total'] as num).toInt() : 0;
+        if (name.isNotEmpty && total > 0) realTotals[name] = total;
       }
     }
 
     if (realTotals.isEmpty) return base;
 
-    // Update locations with real totals where available
     final updated = base.locations.map((loc) {
-      final key = loc.province.toUpperCase();
-      final realTotal = realTotals[key];
+      final realTotal = realTotals[loc.province.toUpperCase()];
       if (realTotal != null && realTotal > 0) {
         return BusinessLocation(
           id: loc.id,
@@ -106,7 +167,6 @@ class SpatialAnalysisService {
       return loc;
     }).toList();
 
-    // Recompute stats and centers from updated locations
     final stats = _computeStats(updated);
     final centers = _computeCenters(updated);
 
@@ -133,23 +193,25 @@ class SpatialAnalysisService {
       ..sort((a, b) => a.totalUsaha.compareTo(b.totalUsaha));
     double gini = 0;
     for (int i = 0; i < sorted.length; i++) {
-      gini += (2 * (i + 1) - sorted.length - 1) * sorted[i].totalUsaha;
+      gini +=
+          (2 * (i + 1) - sorted.length - 1) * sorted[i].totalUsaha;
     }
     final concentration =
     total > 0 ? gini.abs() / (sorted.length * total) : 0.0;
 
     final highest =
     locations.reduce((a, b) => a.totalUsaha > b.totalUsaha ? a : b);
-    final lowestList =
-    locations.where((l) => l.totalUsaha > 0).toList()
+    final lowestList = locations.where((l) => l.totalUsaha > 0).toList()
       ..sort((a, b) => a.totalUsaha.compareTo(b.totalUsaha));
-    final lowest = lowestList.isNotEmpty ? lowestList.first : locations.last;
+    final lowest =
+    lowestList.isNotEmpty ? lowestList.first : locations.last;
 
     final byProv = <String, int>{};
     final bySect = <String, int>{};
     for (final l in locations) {
       byProv[l.province] = (byProv[l.province] ?? 0) + l.totalUsaha;
-      bySect[l.sectorName] = (bySect[l.sectorName] ?? 0) + l.totalUsaha;
+      bySect[l.sectorName] =
+          (bySect[l.sectorName] ?? 0) + l.totalUsaha;
     }
 
     return SpatialStatistics(
@@ -194,6 +256,6 @@ class SpatialAnalysisService {
 
   String _fmt(int n) => n
       .toString()
-      .replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (m) => '${m[1]}.');
+      .replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]}.');
 }

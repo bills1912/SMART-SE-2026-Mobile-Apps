@@ -3,15 +3,33 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/models/chat_models.dart';
+import '../../widgets/chart_narrative_widget.dart';
 
-/// VisualizationCard - displays charts from backend VisualizationConfig
-/// Backend returns ECharts configuration which we convert to fl_chart
+/// VisualizationCard — versi terbaru dengan integrasi narasi AI.
+///
+/// Perubahan dari versi sebelumnya:
+///   - Menambahkan ChartNarrativeWidget di bawah setiap chart
+///   - parentMessageContext diteruskan agar AI punya konteks pesan aslinya
+///   - Layout dirapikan agar narasi tidak terasa tempelan
 class VisualizationCard extends StatefulWidget {
   final VisualizationConfig visualization;
+
+  /// Isi pesan AI yang menghasilkan chart ini.
+  /// Diteruskan ke ChartNarrativeWidget sebagai konteks tambahan.
+  final String? parentMessageContext;
 
   const VisualizationCard({
     super.key,
     required this.visualization,
+
+    // CARA MENGISI parentMessageContext dari chat_message_list.dart:
+    // Saat merender visualisasi dari message, teruskan message.content:
+    //
+    //   VisualizationCard(
+    //     visualization: viz,
+    //     parentMessageContext: message.content,
+    //   )
+    this.parentMessageContext,
   });
 
   @override
@@ -44,7 +62,7 @@ class _VisualizationCardState extends State<VisualizationCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
+          // ── Header ─────────────────────────────────────────────────────
           GestureDetector(
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             child: Container(
@@ -71,13 +89,15 @@ class _VisualizationCardState extends State<VisualizationCard> {
                       children: [
                         Text(
                           widget.visualization.title,
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          style:
+                          Theme.of(context).textTheme.titleSmall?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                         Text(
                           _getChartTypeLabel(),
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          style:
+                          Theme.of(context).textTheme.labelSmall?.copyWith(
                             color: isDark
                                 ? AppColors.darkTextTertiary
                                 : AppColors.lightTextTertiary,
@@ -99,16 +119,26 @@ class _VisualizationCardState extends State<VisualizationCard> {
             ),
           ),
 
-          // Chart Content
+          // ── Chart + Narrative (hanya tampil saat expanded) ─────────────
           if (_isExpanded) ...[
             Divider(
               height: 1,
               color: isDark ? AppColors.darkDivider : AppColors.lightDivider,
             ),
+
+            // Chart canvas
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               height: 280,
               child: _buildChart(isDark),
+            ),
+
+            // ── NARASI AI ─────────────────────────────────────────────────
+            // ChartNarrativeWidget akan otomatis fetch interpretasi dari AI
+            // saat pertama kali ditampilkan. Hasilnya di-cache per chart.id.
+            ChartNarrativeWidget(
+              visualization: widget.visualization,
+              parentMessageContext: widget.parentMessageContext,
             ),
           ],
         ],
@@ -117,8 +147,7 @@ class _VisualizationCardState extends State<VisualizationCard> {
   }
 
   String _getChartTypeLabel() {
-    final chartType = widget.visualization.chartType;
-    switch (chartType) {
+    switch (widget.visualization.chartType) {
       case 'bar':
         return 'Bar Chart';
       case 'line':
@@ -137,8 +166,7 @@ class _VisualizationCardState extends State<VisualizationCard> {
   }
 
   IconData _getChartIcon() {
-    final chartType = widget.visualization.chartType;
-    switch (chartType) {
+    switch (widget.visualization.chartType) {
       case 'bar':
         return Icons.bar_chart;
       case 'line':
@@ -200,7 +228,8 @@ class _VisualizationCardState extends State<VisualizationCard> {
               toY: value,
               gradient: AppColors.primaryGradient,
               width: data.length > 10 ? 16 : 24,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+              borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(6)),
             ),
           ],
         ),
@@ -269,16 +298,16 @@ class _VisualizationCardState extends State<VisualizationCard> {
               },
             ),
           ),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+          const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+          const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         ),
         borderData: FlBorderData(show: false),
         barTouchData: BarTouchData(
           touchTooltipData: BarTouchTooltipData(
-            // FIX: Using tooltipBgColor instead of getTooltipColor for broader compatibility
-            // If you're using fl_chart >= 0.55.0, you can use getTooltipColor
-            // For older versions, use tooltipBgColor
-            tooltipBgColor: isDark ? AppColors.darkSurface : Colors.white,
+            tooltipBgColor:
+            isDark ? AppColors.darkSurface : Colors.white,
             tooltipRoundedRadius: 8,
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
               return BarTooltipItem(
@@ -368,8 +397,10 @@ class _VisualizationCardState extends State<VisualizationCard> {
               },
             ),
           ),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+          const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+          const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         ),
         borderData: FlBorderData(show: false),
         minY: 0,
@@ -407,8 +438,8 @@ class _VisualizationCardState extends State<VisualizationCard> {
         ],
         lineTouchData: LineTouchData(
           touchTooltipData: LineTouchTooltipData(
-            // FIX: Using tooltipBgColor instead of getTooltipColor for broader compatibility
-            tooltipBgColor: isDark ? AppColors.darkSurface : Colors.white,
+            tooltipBgColor:
+            isDark ? AppColors.darkSurface : Colors.white,
             tooltipRoundedRadius: 8,
             getTooltipItems: (touchedSpots) {
               return touchedSpots.map((spot) {
@@ -433,20 +464,19 @@ class _VisualizationCardState extends State<VisualizationCard> {
 
   Widget _buildPieChart(bool isDark, List<Map<String, dynamic>> data) {
     final colors = [
-      const Color(0xFFE74C3C), // Red
-      const Color(0xFF3498DB), // Blue
-      const Color(0xFF2ECC71), // Green
-      const Color(0xFFF39C12), // Orange
-      const Color(0xFF9B59B6), // Purple
-      const Color(0xFF1ABC9C), // Teal
-      const Color(0xFFE67E22), // Dark Orange
-      const Color(0xFF34495E), // Dark Blue
+      const Color(0xFFE74C3C),
+      const Color(0xFF3498DB),
+      const Color(0xFF2ECC71),
+      const Color(0xFFF39C12),
+      const Color(0xFF9B59B6),
+      const Color(0xFF1ABC9C),
+      const Color(0xFFE67E22),
+      const Color(0xFF34495E),
     ];
 
     final sections = <PieChartSectionData>[];
     double total = 0;
 
-    // Calculate total
     for (final item in data) {
       total += _getValue(item);
     }
@@ -460,7 +490,9 @@ class _VisualizationCardState extends State<VisualizationCard> {
         PieChartSectionData(
           color: colors[i % colors.length],
           value: value,
-          title: percentage >= 5 ? '${percentage.toStringAsFixed(1)}%' : '',
+          title: percentage >= 5
+              ? '${percentage.toStringAsFixed(1)}%'
+              : '',
           radius: 80,
           titleStyle: const TextStyle(
             fontSize: 11,
@@ -471,7 +503,6 @@ class _VisualizationCardState extends State<VisualizationCard> {
       );
     }
 
-    // Add "Others" if more than 8 items
     if (data.length > 8) {
       double othersTotal = 0;
       for (int i = 8; i < data.length; i++) {
@@ -482,7 +513,9 @@ class _VisualizationCardState extends State<VisualizationCard> {
         PieChartSectionData(
           color: const Color(0xFF95A5A6),
           value: othersTotal,
-          title: percentage >= 5 ? '${percentage.toStringAsFixed(1)}%' : '',
+          title: percentage >= 5
+              ? '${percentage.toStringAsFixed(1)}%'
+              : '',
           radius: 80,
           titleStyle: const TextStyle(
             fontSize: 11,
@@ -533,7 +566,10 @@ class _VisualizationCardState extends State<VisualizationCard> {
                         Expanded(
                           child: Text(
                             _truncateLabel(label, 15),
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
                               color: isDark
                                   ? AppColors.darkTextSecondary
                                   : AppColors.lightTextSecondary,
@@ -562,7 +598,8 @@ class _VisualizationCardState extends State<VisualizationCard> {
                         const SizedBox(width: 8),
                         Text(
                           'Lainnya',
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          style:
+                          Theme.of(context).textTheme.labelSmall?.copyWith(
                             color: isDark
                                 ? AppColors.darkTextSecondary
                                 : AppColors.lightTextSecondary,
@@ -579,12 +616,11 @@ class _VisualizationCardState extends State<VisualizationCard> {
     );
   }
 
-  /// Fallback for treemap - show as horizontal bar chart
-  Widget _buildTreemapFallback(bool isDark, List<Map<String, dynamic>> data) {
+  Widget _buildTreemapFallback(
+      bool isDark, List<Map<String, dynamic>> data) {
     return _buildBarChart(isDark, data);
   }
 
-  /// Fallback for heatmap - show message
   Widget _buildHeatmapFallback(bool isDark) {
     return Center(
       child: Column(
@@ -599,13 +635,17 @@ class _VisualizationCardState extends State<VisualizationCard> {
           Text(
             'Heatmap tersedia di web app',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary,
+              color: isDark
+                  ? AppColors.darkTextTertiary
+                  : AppColors.lightTextTertiary,
             ),
           ),
           Text(
             'Gunakan browser untuk melihat visualisasi lengkap',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary,
+              color: isDark
+                  ? AppColors.darkTextTertiary
+                  : AppColors.lightTextTertiary,
             ),
           ),
         ],
@@ -613,8 +653,8 @@ class _VisualizationCardState extends State<VisualizationCard> {
     );
   }
 
-  /// Fallback for radar chart - show as bar chart
-  Widget _buildRadarFallback(bool isDark, List<Map<String, dynamic>> data) {
+  Widget _buildRadarFallback(
+      bool isDark, List<Map<String, dynamic>> data) {
     return _buildBarChart(isDark, data);
   }
 
@@ -626,13 +666,17 @@ class _VisualizationCardState extends State<VisualizationCard> {
           Icon(
             Icons.insert_chart_outlined,
             size: 48,
-            color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary,
+            color: isDark
+                ? AppColors.darkTextTertiary
+                : AppColors.lightTextTertiary,
           ),
           const SizedBox(height: 12),
           Text(
             'Data tidak tersedia',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary,
+              color: isDark
+                  ? AppColors.darkTextTertiary
+                  : AppColors.lightTextTertiary,
             ),
           ),
         ],
@@ -640,25 +684,23 @@ class _VisualizationCardState extends State<VisualizationCard> {
     );
   }
 
-  // Helper methods
   double _getValue(Map<String, dynamic> item) {
     final value = item['value'] ?? item['y'] ?? 0;
     return (value is num) ? value.toDouble() : 0.0;
   }
 
   String _getLabel(Map<String, dynamic> item, int index) {
-    return (item['name'] ?? item['label'] ?? item['x'] ?? 'Item $index').toString();
+    return (item['name'] ?? item['label'] ?? item['x'] ?? 'Item $index')
+        .toString();
   }
 
   double _getMaxValue(List<Map<String, dynamic>> data) {
     if (data.isEmpty) return 100;
-
     double max = 0;
     for (final item in data) {
       final value = _getValue(item);
       if (value > max) max = value;
     }
-
     return max > 0 ? max : 100;
   }
 
@@ -675,6 +717,7 @@ class _VisualizationCardState extends State<VisualizationCard> {
     } else if (value >= 1000) {
       return '${(value / 1000).toStringAsFixed(1)}K';
     }
-    return value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 1);
+    return value
+        .toStringAsFixed(value.truncateToDouble() == value ? 0 : 1);
   }
 }
